@@ -1,0 +1,11 @@
+.{
+    .name = .jarvis_core,
+    .version = "0.1.0",
+    .fingerprint = 0x30a1174a6d3e8eb6,
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

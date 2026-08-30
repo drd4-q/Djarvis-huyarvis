@@ -1,0 +1,38 @@
+{
+  "resource_profile": "hybrid_low_memory",
+  "devices": {
+    "llm": {
+      "device": "gpu",
+      "endpoint": "http://127.0.0.1:8080/v1",
+      "model": "qwen2.5-3b-instruct-q4_k_m.gguf",
+      "vram_limit_mb": 2048,
+      "context_tokens": 2048,
+      "flash_attention": true,
+      "kv_quantization": "q8_0"
+    },
+    "stt": {
+      "device": "cpu",
+      "engine": "whisper.cpp",
+      "model": "ggml-base.bin",
+      "threads": 4,
+      "expected_ram_mb": 75
+    },
+    "tts": {
+      "device": "cpu",
+      "engine": "piper-tts",
+      "model": "ru_RU-dmitri-medium.onnx",
+      "threads": 2,
+      "expected_ram_mb": 60
+    },
+    "vad": {
+      "device": "cpu",
+      "engine": "silero_vad",
+      "threads": 1,
+      "expected_ram_mb": 5
+    }
+  },
+  "ipc": {
+    "pipe_name": "\\\\.\\pipe\\jarvis_ipc",
+    "buffer_size_kb": 512
+  }
+}
