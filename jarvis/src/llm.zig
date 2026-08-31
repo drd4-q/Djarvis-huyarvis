@@ -113,6 +113,20 @@ pub const TOOLS_SCHEMA_JSON =
     \\  {
     \\    "type": "function",
     \\    "function": {
+    \\      "name": "set_vad_sensitivity",
+    \\      "description": "Adjust microphone / Whisper VAD speech detection threshold (sensitivity level from 100 to 1000). Lower is more sensitive.",
+    \\      "parameters": {
+    \\        "type": "object",
+    \\        "properties": {
+    \\          "sensitivity": { "type": "integer", "description": "VAD sensitivity value (e.g. 200 for sensitive/quiet voice, 400 for standard, 700 for noisy background)" }
+    \\        },
+    \\        "required": ["sensitivity"]
+    \\      }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
     \\      "name": "open_url",
     \\      "description": "Open website URL in default browser (e.g. 'https://youtube.com', 'https://github.com').",
     \\      "parameters": {

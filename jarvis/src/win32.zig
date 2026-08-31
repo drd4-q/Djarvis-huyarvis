@@ -486,67 +486,90 @@ pub fn rescanApps(allocator: std.mem.Allocator) ![]const u8 {
     return "База данных установленных программ успешно обновлена.";
 }
 
+pub var g_vad_threshold: std.atomic.Value(i32) = std.atomic.Value(i32).init(300);
+
+pub fn setVadSensitivity(sensitivity: i32) ![]const u8 {
+    const clamped = std.math.clamp(sensitivity, 50, 2000);
+    g_vad_threshold.store(clamped, .release);
+    var buf: [128]u8 = undefined;
+    return std.fmt.bufPrint(&buf, "Чувствительность микрофона установлена на {d}.", .{clamped}) catch "Чувствительность изменена.";
+}
+
+pub fn getVadSensitivity() i32 {
+    return g_vad_threshold.load(.acquire);
+}
+
+fn containsFuzzy(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (haystack.len < needle.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
+    }
+    return false;
+}
+
 pub fn openAppByName(allocator: std.mem.Allocator, app_name: []const u8) ![]const u8 {
     const trimmed = std.mem.trim(u8, app_name, " \r\n\t'\"");
     if (trimmed.len == 0) return "Не указано имя программы.";
 
     // 1. Built-in Windows tools
-    if (std.mem.eql(u8, trimmed, "калькулятор") or std.ascii.eqlIgnoreCase(trimmed, "calc") or std.ascii.eqlIgnoreCase(trimmed, "calculator")) {
+    if (std.mem.indexOf(u8, trimmed, "калькулятор") != null or std.ascii.eqlIgnoreCase(trimmed, "calc") or std.ascii.eqlIgnoreCase(trimmed, "calculator")) {
         try openApp(allocator, "calc.exe", null);
         return "Открываю Калькулятор.";
-    } else if (std.mem.eql(u8, trimmed, "блокнот") or std.ascii.eqlIgnoreCase(trimmed, "notepad")) {
+    } else if (std.mem.indexOf(u8, trimmed, "блокнот") != null or std.ascii.eqlIgnoreCase(trimmed, "notepad")) {
         try openApp(allocator, "notepad.exe", null);
         return "Открываю Блокнот.";
-    } else if (std.mem.eql(u8, trimmed, "диспетчер задач") or std.ascii.eqlIgnoreCase(trimmed, "taskmgr") or std.ascii.eqlIgnoreCase(trimmed, "task manager")) {
+    } else if (std.mem.indexOf(u8, trimmed, "диспетчер задач") != null or std.ascii.eqlIgnoreCase(trimmed, "taskmgr") or std.ascii.eqlIgnoreCase(trimmed, "task manager")) {
         try openApp(allocator, "taskmgr.exe", null);
         return "Открываю Диспетчер задач.";
-    } else if (std.mem.eql(u8, trimmed, "командная строка") or std.ascii.eqlIgnoreCase(trimmed, "cmd")) {
+    } else if (std.mem.indexOf(u8, trimmed, "командная строка") != null or std.ascii.eqlIgnoreCase(trimmed, "cmd")) {
         try openApp(allocator, "cmd.exe", null);
         return "Открываю Командную строку.";
-    } else if (std.mem.eql(u8, trimmed, "проводник") or std.ascii.eqlIgnoreCase(trimmed, "explorer")) {
+    } else if (std.mem.indexOf(u8, trimmed, "проводник") != null or std.ascii.eqlIgnoreCase(trimmed, "explorer")) {
         try openApp(allocator, "explorer.exe", null);
         return "Открываю Проводник.";
-    } else if (std.mem.eql(u8, trimmed, "паинт") or std.mem.eql(u8, trimmed, "пейнт") or std.ascii.eqlIgnoreCase(trimmed, "paint") or std.ascii.eqlIgnoreCase(trimmed, "mspaint")) {
+    } else if (std.mem.indexOf(u8, trimmed, "паинт") != null or std.mem.indexOf(u8, trimmed, "пейнт") != null or std.ascii.eqlIgnoreCase(trimmed, "paint") or std.ascii.eqlIgnoreCase(trimmed, "mspaint")) {
         try openApp(allocator, "mspaint.exe", null);
         return "Открываю Paint.";
-    } else if (std.mem.eql(u8, trimmed, "настройки") or std.mem.eql(u8, trimmed, "параметры") or std.ascii.eqlIgnoreCase(trimmed, "settings")) {
+    } else if (std.mem.indexOf(u8, trimmed, "настройки") != null or std.mem.indexOf(u8, trimmed, "параметры") != null or std.ascii.eqlIgnoreCase(trimmed, "settings")) {
         try openApp(allocator, "ms-settings:", null);
         return "Открываю Параметры Windows.";
     }
 
     // Map common Russian spoken aliases to query keywords
     var query: []const u8 = trimmed;
-    if (std.mem.eql(u8, trimmed, "дискорд")) {
+    if (std.mem.indexOf(u8, trimmed, "дискорд") != null or std.ascii.eqlIgnoreCase(trimmed, "discord")) {
         query = "discord";
-    } else if (std.mem.eql(u8, trimmed, "телеграм") or std.mem.eql(u8, trimmed, "телега")) {
+    } else if (std.mem.indexOf(u8, trimmed, "телеграм") != null or std.mem.indexOf(u8, trimmed, "телег") != null or std.ascii.eqlIgnoreCase(trimmed, "telegram")) {
         query = "telegram";
-    } else if (std.mem.eql(u8, trimmed, "хром") or std.mem.eql(u8, trimmed, "гугл хром") or std.mem.eql(u8, trimmed, "браузер")) {
+    } else if (std.mem.indexOf(u8, trimmed, "хром") != null or std.mem.indexOf(u8, trimmed, "гугл") != null or std.mem.indexOf(u8, trimmed, "браузер") != null or std.ascii.eqlIgnoreCase(trimmed, "chrome")) {
         query = "chrome";
-    } else if (std.mem.eql(u8, trimmed, "стим")) {
+    } else if (std.mem.indexOf(u8, trimmed, "стим") != null or std.ascii.eqlIgnoreCase(trimmed, "steam")) {
         query = "steam";
-    } else if (std.mem.eql(u8, trimmed, "обс") or std.mem.eql(u8, trimmed, "обска")) {
+    } else if (std.mem.indexOf(u8, trimmed, "обс") != null or std.ascii.eqlIgnoreCase(trimmed, "obs")) {
         query = "obs";
-    } else if (std.mem.eql(u8, trimmed, "код") or std.mem.eql(u8, trimmed, "вскод") or std.mem.eql(u8, trimmed, "вс код")) {
+    } else if (std.mem.indexOf(u8, trimmed, "код") != null or std.mem.indexOf(u8, trimmed, "вскод") != null or std.mem.indexOf(u8, trimmed, "вс код") != null or std.ascii.eqlIgnoreCase(trimmed, "code")) {
         query = "visual studio code";
-    } else if (std.mem.eql(u8, trimmed, "музыка")) {
+    } else if (std.mem.indexOf(u8, trimmed, "музык") != null or std.mem.indexOf(u8, trimmed, "яндекс") != null) {
         query = "яндекс музыка";
-    } else if (std.mem.eql(u8, trimmed, "аида")) {
+    } else if (std.mem.indexOf(u8, trimmed, "аида") != null or std.ascii.eqlIgnoreCase(trimmed, "aida")) {
         query = "aida64";
-    } else if (std.mem.eql(u8, trimmed, "автобернер") or std.mem.eql(u8, trimmed, "афтербернер")) {
+    } else if (std.mem.indexOf(u8, trimmed, "автобернер") != null or std.mem.indexOf(u8, trimmed, "афтербернер") != null or std.ascii.eqlIgnoreCase(trimmed, "afterburner")) {
         query = "msi afterburner";
-    } else if (std.mem.eql(u8, trimmed, "риватюнер") or std.mem.eql(u8, trimmed, "рива")) {
+    } else if (std.mem.indexOf(u8, trimmed, "риватюнер") != null or std.mem.indexOf(u8, trimmed, "рива") != null or std.ascii.eqlIgnoreCase(trimmed, "rivatuner")) {
         query = "rivatuner";
-    } else if (std.mem.eql(u8, trimmed, "торрент") or std.mem.eql(u8, trimmed, "кьюбит")) {
+    } else if (std.mem.indexOf(u8, trimmed, "торрент") != null or std.mem.indexOf(u8, trimmed, "кьюбит") != null or std.ascii.eqlIgnoreCase(trimmed, "torrent")) {
         query = "qbittorrent";
-    } else if (std.mem.eql(u8, trimmed, "визтри")) {
+    } else if (std.mem.indexOf(u8, trimmed, "визтри") != null or std.ascii.eqlIgnoreCase(trimmed, "wiztree")) {
         query = "wiztree";
-    } else if (std.mem.eql(u8, trimmed, "рипер")) {
+    } else if (std.mem.indexOf(u8, trimmed, "рипер") != null or std.ascii.eqlIgnoreCase(trimmed, "reaper")) {
         query = "reaper";
-    } else if (std.mem.eql(u8, trimmed, "принтер") or std.mem.eql(u8, trimmed, "крилити")) {
+    } else if (std.mem.indexOf(u8, trimmed, "принтер") != null or std.mem.indexOf(u8, trimmed, "крилити") != null or std.ascii.eqlIgnoreCase(trimmed, "creality")) {
         query = "creality";
-    } else if (std.mem.eql(u8, trimmed, "эврисинг")) {
+    } else if (std.mem.indexOf(u8, trimmed, "эврисинг") != null or std.ascii.eqlIgnoreCase(trimmed, "everything")) {
         query = "everything";
-    } else if (std.mem.eql(u8, trimmed, "радмин")) {
+    } else if (std.mem.indexOf(u8, trimmed, "радмин") != null or std.ascii.eqlIgnoreCase(trimmed, "radmin")) {
         query = "radmin";
     }
 
@@ -588,28 +611,24 @@ pub fn openAppByName(allocator: std.mem.Allocator, app_name: []const u8) ![]cons
                                     const app_target = path_val.?.string;
                                     const display_title = if (title_val != null and title_val.? == .string) title_val.?.string else query;
 
-                                    // Score calculation:
-                                    // 100: Exact match
-                                    // 80: Substring start
-                                    // 50: Substring anywhere
                                     var score: usize = 0;
                                     if (std.ascii.eqlIgnoreCase(app_key, query) or std.ascii.eqlIgnoreCase(display_title, query)) {
                                         score = 100;
-                                    } else if (std.mem.startsWith(u8, app_key, query)) {
+                                    } else if (containsFuzzy(app_key, query) or containsFuzzy(display_title, query)) {
                                         score = 80;
-                                    } else if (std.mem.indexOf(u8, app_key, query) != null) {
+                                    } else if (containsFuzzy(query, app_key)) {
                                         score = 50;
-                                    } else if (std.mem.indexOf(u8, query, app_key) != null) {
-                                        score = 40;
                                     }
 
                                     // Filter out uninstaller shortcuts
-                                    if (std.mem.indexOf(u8, app_key, "uninstall") != null or std.mem.indexOf(u8, app_key, "деинсталл") != null) {
+                                    if (containsFuzzy(app_key, "uninstall") or containsFuzzy(app_key, "деинсталл")) {
                                         score = 0;
                                     }
 
                                     if (score > best_score) {
                                         best_score = score;
+                                        if (best_match_path) |bmp| allocator.free(bmp);
+                                        if (best_match_title) |bmt| allocator.free(bmt);
                                         best_match_path = try allocator.dupe(u8, app_target);
                                         best_match_title = try allocator.dupe(u8, display_title);
                                     }

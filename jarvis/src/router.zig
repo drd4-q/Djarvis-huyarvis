@@ -89,6 +89,12 @@ pub const Router = struct {
                 if (p.value == .object) {
                     if (p.value.object.get("path")) |pt| {
                         if (pt == .string) path = pt.string;
+                    } else if (p.value.object.get("name")) |pt| {
+                        if (pt == .string) path = pt.string;
+                    } else if (p.value.object.get("app")) |pt| {
+                        if (pt == .string) path = pt.string;
+                    } else if (p.value.object.get("app_name")) |pt| {
+                        if (pt == .string) path = pt.string;
                     }
                     if (p.value.object.get("args")) |ag| {
                         if (ag == .string) args = ag.string;
@@ -102,6 +108,18 @@ pub const Router = struct {
             } else {
                 return win32.openAppByName(arena_alloc, path) catch "не удалось запустить программу";
             }
+        } else if (std.mem.eql(u8, name, "set_vad_sensitivity")) {
+            var level: i32 = 300;
+            if (parsed_args_opt) |p| {
+                if (p.value == .object) {
+                    if (p.value.object.get("sensitivity")) |s| {
+                        if (s == .integer) level = @intCast(s.integer);
+                    } else if (p.value.object.get("level")) |s| {
+                        if (s == .integer) level = @intCast(s.integer);
+                    }
+                }
+            }
+            return win32.setVadSensitivity(level) catch "Чувствительность микрофона обновлена.";
         } else if (std.mem.eql(u8, name, "rescan_apps")) {
             return win32.rescanApps(arena_alloc) catch "не удалось обновить базу программ";
         } else if (std.mem.eql(u8, name, "open_url")) {

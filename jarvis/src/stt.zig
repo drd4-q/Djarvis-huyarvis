@@ -87,8 +87,9 @@ pub const SttEngine = struct {
             self.noise_floor = @divTrunc(self.noise_floor * 31 + rms, 32);
         }
 
-        // Sensitive dynamic threshold: at least 350 RMS and well above ambient noise floor
-        const dynamic_threshold = @max(350, self.noise_floor * 2 + 150);
+        const win32 = @import("win32.zig");
+        const user_target = win32.getVadSensitivity();
+        const dynamic_threshold = @max(user_target, self.noise_floor * 2 + 50);
 
         if (rms > dynamic_threshold) {
             // Speech detected

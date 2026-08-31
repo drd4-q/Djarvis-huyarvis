@@ -103,37 +103,41 @@ void audio_bridge_deinit(void) {
 #include <stdlib.h>
 
 int capture_screen_bmp(const char* filepath) {
-    int x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    int w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    int h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    if (w <= 0 || h <= 0) {
-        w = GetSystemMetrics(SM_CXSCREEN);
-        h = GetSystemMetrics(SM_CYSCREEN);
+    int src_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    int src_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    int src_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    int src_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if (src_w <= 0 || src_h <= 0) {
+        src_w = GetSystemMetrics(SM_CXSCREEN);
+        src_h = GetSystemMetrics(SM_CYSCREEN);
     }
+
+    // High-speed 768x432 downscaling for ultra-fast SmolVLM inference
+    int target_w = 768;
+    int target_h = 432;
 
     HDC hdcScreen = GetDC(NULL);
     HDC hdcMem = CreateCompatibleDC(hdcScreen);
-    HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, w, h);
+    HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, target_w, target_h);
     HGDIOBJ old = SelectObject(hdcMem, hbm);
-    BitBlt(hdcMem, 0, 0, w, h, hdcScreen, x, y, SRCCOPY);
-    SelectObject(hdcMem, old);
 
-    BITMAP bmp;
-    GetObject(hbm, sizeof(BITMAP), &bmp);
+    SetStretchBltMode(hdcMem, HALFTONE);
+    SetBrushOrgEx(hdcMem, 0, 0, NULL);
+    StretchBlt(hdcMem, 0, 0, target_w, target_h, hdcScreen, src_x, src_y, src_w, src_h, SRCCOPY);
+    SelectObject(hdcMem, old);
 
     BITMAPFILEHEADER bmfHeader;
     BITMAPINFOHEADER bi;
     memset(&bi, 0, sizeof(BITMAPINFOHEADER));
     bi.biSize = sizeof(BITMAPINFOHEADER);
-    bi.biWidth = bmp.bmWidth;
-    bi.biHeight = bmp.bmHeight;
+    bi.biWidth = target_w;
+    bi.biHeight = target_h;
     bi.biPlanes = 1;
     bi.biBitCount = 24;
     bi.biCompression = BI_RGB;
 
-    DWORD rowSize = ((bmp.bmWidth * 24 + 31) / 32) * 4;
-    DWORD dwBmpSize = rowSize * bmp.bmHeight;
+    DWORD rowSize = ((target_w * 24 + 31) / 32) * 4;
+    DWORD dwBmpSize = rowSize * target_h;
     char* lpBitmap = (char*)malloc(dwBmpSize);
     if (!lpBitmap) {
         DeleteObject(hbm);
@@ -142,7 +146,7 @@ int capture_screen_bmp(const char* filepath) {
         return 0;
     }
 
-    GetDIBits(hdcScreen, hbm, 0, (UINT)bmp.bmHeight, lpBitmap, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+    GetDIBits(hdcScreen, hbm, 0, (UINT)target_h, lpBitmap, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
 
     bmfHeader.bfOffBits = (DWORD)sizeof(BITMAPFILEHEADER) + (DWORD)sizeof(BITMAPINFOHEADER);
     bmfHeader.bfSize = dwBmpSize + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
