@@ -80,10 +80,118 @@ function Set-Autostart($enable) {
     }
 }
 
-function Perform-Installation($dlLLM, $dlAudio, $addAutostart, $createDesktop) {
+function Ensure-Zig-Installed {
+    Write-Host "`n[0/4] Проверка компилятора Zig в системе:" -ForegroundColor Yellow
+
+    $zigCmd = Get-Command zig -ErrorAction SilentlyContinue
+    if ($zigCmd) {
+        $zigVer = (& zig version) 2>$null
+        Write-Host "  [+] Zig уже установлен в системе: $zigVer ($($zigCmd.Source))" -ForegroundColor Green
+        return $true
+    }
+
+    $LocalZigDir = Join-Path $ProjectDir "tools\zig"
+    $LocalZigExe = Join-Path $LocalZigDir "zig.exe"
+    
+    # Check if inside nested folder after extraction
+    if (-not (Test-Path $LocalZigExe)) {
+        $found = Get-ChildItem -Path $LocalZigDir -Filter "zig.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) {
+            $LocalZigExe = $found.FullName
+            $LocalZigDir = $found.DirectoryName
+        }
+    }
+
+    if (Test-Path $LocalZigExe) {
+        Write-Host "  [+] Zig найден в локальной папке: $LocalZigExe" -ForegroundColor Green
+        # Add to PATH
+        Add-Path-To-Environment $LocalZigDir
+        return $true
+    }
+
+    Write-Host "  [~] Zig не найден. Начинаем автоматическую установку..." -ForegroundColor Cyan
+
+    # Method A: Try winget if available
+    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wingetCmd) {
+        Write-Host "  [~] Попытка установки Zig через Windows Package Manager (winget)..." -ForegroundColor Cyan
+        try {
+            & winget install --id zig.zig -e --accept-source-agreements --accept-package-agreements --silent | Out-Null
+            # Refresh PATH
+            $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+            $machinePath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+            $env:PATH = "$userPath;$machinePath"
+            
+            $zigCmdAfter = Get-Command zig -ErrorAction SilentlyContinue
+            if ($zigCmdAfter) {
+                Write-Host "  [OK] Zig успешно установлен через winget!" -ForegroundColor Green
+                return $true
+            }
+        } catch {
+            Write-Host "  [!] Установка через winget не удалась, скачиваем напрямую..." -ForegroundColor Yellow
+        }
+    }
+
+    # Method B: Direct Zip download and extraction
+    $ZigZipUrl = "https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip"
+    $ZigZipDest = Join-Path $ProjectDir "tools\zig-windows.zip"
+    $ToolsDir = Join-Path $ProjectDir "tools"
+
+    if (-not (Test-Path $ToolsDir)) { New-Item -ItemType Directory -Path $ToolsDir -Force | Out-Null }
+
+    Write-Host "  [~] Скачивание официального архива Zig с ziglang.org..." -ForegroundColor Cyan
+    Download-FileWithProgress $ZigZipUrl $ZigZipDest "Zig Compiler (Windows x64)"
+
+    if (Test-Path $ZigZipDest) {
+        Write-Host "  [~] Распаковка архива Zig..." -ForegroundColor Cyan
+        try {
+            Expand-Archive -Path $ZigZipDest -DestinationPath $ToolsDir -Force
+            Remove-Item $ZigZipDest -Force -ErrorAction SilentlyContinue
+
+            $foundExe = Get-ChildItem -Path $ToolsDir -Filter "zig.exe" -Recurse | Select-Object -First 1
+            if ($foundExe) {
+                $actualZigDir = $foundExe.DirectoryName
+                Add-Path-To-Environment $actualZigDir
+                Write-Host "  [OK] Zig успешно установлен и готов к использованию!" -ForegroundColor Green
+                return $true
+            }
+        } catch {
+            Write-Host "  [!] Ошибка при распаковке архива Zig: $_" -ForegroundColor Red
+        }
+    }
+
+    Write-Host "  [!] Не удалось автоматически установить Zig. Вы можете установить его вручную с https://ziglang.org" -ForegroundColor Yellow
+    return $false
+}
+
+function Add-Path-To-Environment($dirPath) {
+    try {
+        # Update current process PATH
+        if ($env:PATH -notlike "*$dirPath*") {
+            $env:PATH = "$dirPath;$env:PATH"
+        }
+
+        # Update User Environment PATH permanently in Windows Registry
+        $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+        if ($userPath -notlike "*$dirPath*") {
+            $newPath = if ($userPath) { "$userPath;$dirPath" } else { $dirPath }
+            [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+            Write-Host "  [+] Путь '$dirPath' добавлен в системный PATH пользователя." -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "  [!] Не удалось сохранить PATH в реестр: $_" -ForegroundColor Yellow
+    }
+}
+
+function Perform-Installation($dlLLM, $dlAudio, $addAutostart, $createDesktop, $installZig = $true) {
     Write-Host "`n=======================================================" -ForegroundColor Cyan
     Write-Host "            НАЧАЛО УСТАНОВКИ JARVIS AI" -ForegroundColor Cyan
     Write-Host "=======================================================`n" -ForegroundColor Cyan
+
+    # 0. Ensure Zig is installed and registered in PATH
+    if ($installZig) {
+        Ensure-Zig-Installed | Out-Null
+    }
 
     # 1. Ensure models directory
     if (-not (Test-Path $ModelsDir)) {
@@ -121,7 +229,7 @@ function Perform-Installation($dlLLM, $dlAudio, $addAutostart, $createDesktop) {
                     Write-Host "  [OK] Сборка успешно завершена: $JarvisExe" -ForegroundColor Green
                 }
             } catch {
-                Write-Host "  [!] Предупреждение: Zig не найден в PATH или сборка пропущена." -ForegroundColor Yellow
+                Write-Host "  [!] Предупреждение: Сборка не удалась или Zig не найден." -ForegroundColor Yellow
             }
         }
     } else {
@@ -144,7 +252,7 @@ function Perform-Installation($dlLLM, $dlAudio, $addAutostart, $createDesktop) {
     Write-Host "`n=======================================================" -ForegroundColor Green
     Write-Host "         УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!" -ForegroundColor Green
     Write-Host "=======================================================" -ForegroundColor Green
-    Write-Host "Для запуска ассистента используйте scripts\run_all.bat" -ForegroundColor White
+    Write-Host "Для запуска ассистента используйте scripts\run_all.bat или ярлык на Рабочем столе" -ForegroundColor White
 }
 
 # ----------------- GUI Windows Forms Setup -----------------
@@ -154,7 +262,7 @@ function Show-GUI-Installer {
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Jarvis AI Assistant — Мастер установки"
-    $form.Size = New-Object System.Drawing.Size(520, 430)
+    $form.Size = New-Object System.Drawing.Size(520, 480)
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
@@ -188,34 +296,42 @@ function Show-GUI-Installer {
     $grpBox = New-Object System.Windows.Forms.GroupBox
     $grpBox.Text = " Компоненты и параметры установки "
     $grpBox.Location = New-Object System.Drawing.Point(20, 85)
-    $grpBox.Size = New-Object System.Drawing.Size(465, 220)
+    $grpBox.Size = New-Object System.Drawing.Size(465, 270)
     $form.Controls.Add($grpBox)
 
     # Checkboxes
     $chkLLM = New-Object System.Windows.Forms.CheckBox
     $chkLLM.Text = "Скачать модель Qwen2.5-3B-Instruct (GGUF, ~1.9 ГБ)"
-    $chkLLM.Location = New-Object System.Drawing.Point(20, 30)
+    $chkLLM.Location = New-Object System.Drawing.Point(20, 28)
     $chkLLM.Size = New-Object System.Drawing.Size(420, 24)
     $chkLLM.Checked = $true
     $grpBox.Controls.Add($chkLLM)
 
     $chkAudio = New-Object System.Windows.Forms.CheckBox
     $chkAudio.Text = "Скачать модели STT и TTS (Whisper + Piper, ~135 МБ)"
-    $chkAudio.Location = New-Object System.Drawing.Point(20, 65)
+    $chkAudio.Location = New-Object System.Drawing.Point(20, 62)
     $chkAudio.Size = New-Object System.Drawing.Size(420, 24)
     $chkAudio.Checked = $true
     $grpBox.Controls.Add($chkAudio)
 
+    $chkZig = New-Object System.Windows.Forms.CheckBox
+    $chkZig.Text = "Проверить и автоматически установить Zig в PATH (если нет)"
+    $chkZig.Location = New-Object System.Drawing.Point(20, 96)
+    $chkZig.Size = New-Object System.Drawing.Size(420, 24)
+    $chkZig.Checked = $true
+    $chkZig.ForeColor = [System.Drawing.Color]::FromArgb(30, 64, 175)
+    $grpBox.Controls.Add($chkZig)
+
     $chkDesktop = New-Object System.Windows.Forms.CheckBox
     $chkDesktop.Text = "Создать ярлык на Рабочем столе"
-    $chkDesktop.Location = New-Object System.Drawing.Point(20, 110)
+    $chkDesktop.Location = New-Object System.Drawing.Point(20, 140)
     $chkDesktop.Size = New-Object System.Drawing.Size(420, 24)
     $chkDesktop.Checked = $true
     $grpBox.Controls.Add($chkDesktop)
 
     $chkAutostart = New-Object System.Windows.Forms.CheckBox
     $chkAutostart.Text = "Добавить Jarvis в автозагрузку Windows (при входе в систему)"
-    $chkAutostart.Location = New-Object System.Drawing.Point(20, 145)
+    $chkAutostart.Location = New-Object System.Drawing.Point(20, 175)
     $chkAutostart.Size = New-Object System.Drawing.Size(430, 24)
     $chkAutostart.Checked = $true
     $chkAutostart.ForeColor = [System.Drawing.Color]::FromArgb(15, 118, 110)
@@ -225,7 +341,7 @@ function Show-GUI-Installer {
     $btnInstall = New-Object System.Windows.Forms.Button
     $btnInstall.Text = "Установить"
     $btnInstall.Size = New-Object System.Drawing.Size(140, 38)
-    $btnInstall.Location = New-Object System.Drawing.Point(345, 330)
+    $btnInstall.Location = New-Object System.Drawing.Point(345, 375)
     $btnInstall.BackColor = [System.Drawing.Color]::FromArgb(37, 99, 235)
     $btnInstall.ForeColor = [System.Drawing.Color]::White
     $btnInstall.FlatStyle = "Flat"
@@ -237,7 +353,7 @@ function Show-GUI-Installer {
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text = "Отмена"
     $btnCancel.Size = New-Object System.Drawing.Size(100, 38)
-    $btnCancel.Location = New-Object System.Drawing.Point(235, 330)
+    $btnCancel.Location = New-Object System.Drawing.Point(235, 375)
     $btnCancel.BackColor = [System.Drawing.Color]::FromArgb(226, 232, 240)
     $btnCancel.ForeColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
     $btnCancel.FlatStyle = "Flat"
@@ -254,9 +370,10 @@ function Show-GUI-Installer {
         $dlAudio = $chkAudio.Checked
         $addAutostart = $chkAutostart.Checked
         $createDesktop = $chkDesktop.Checked
+        $installZig = $chkZig.Checked
 
         $form.Close()
-        Perform-Installation $dlLLM $dlAudio $addAutostart $createDesktop
+        Perform-Installation $dlLLM $dlAudio $addAutostart $createDesktop $installZig
     })
 
     [void]$form.ShowDialog()
@@ -269,13 +386,15 @@ try {
     Write-Host "[Console Mode] GUI недоступен. Запуск в интерактивном консольном режиме..." -ForegroundColor Yellow
     $ansLLM = Read-Host "Скачать модель Qwen2.5-3B-Instruct (~1.9 GB)? (Y/n)"
     $ansAudio = Read-Host "Скачать модели Whisper STT + Piper TTS? (Y/n)"
+    $ansZig = Read-Host "Проверить и установить Zig в PATH (если нет)? (Y/n)"
     $ansDesktop = Read-Host "Создать ярлык на Рабочем столе? (Y/n)"
     $ansAutostart = Read-Host "Добавить в автозагрузку Windows? (Y/n)"
 
     $dlLLM = ($ansLLM -ne 'n' -and $ansLLM -ne 'N')
     $dlAudio = ($ansAudio -ne 'n' -and $ansAudio -ne 'N')
+    $installZig = ($ansZig -ne 'n' -and $ansZig -ne 'N')
     $createDesktop = ($ansDesktop -ne 'n' -and $ansDesktop -ne 'N')
     $addAutostart = ($ansAutostart -ne 'n' -and $ansAutostart -ne 'N')
 
-    Perform-Installation $dlLLM $dlAudio $addAutostart $createDesktop
+    Perform-Installation $dlLLM $dlAudio $addAutostart $createDesktop $installZig
 }
