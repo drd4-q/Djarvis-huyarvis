@@ -1,5 +1,8 @@
 .zig-cache/
 zig-out/
+bin/
+models/
 *.exe
 *.o
 *.obj
+

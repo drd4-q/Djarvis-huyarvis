@@ -8,70 +8,41 @@ pub const SystemPrompt =
     \\Отвечай на русском языке кратко (1-2 предложения), без лишней воды.
 ;
 
-const win_wsa = if (builtin.os.tag == .windows) struct {
-    const WSADATA = extern struct {
-        wVersion: u16,
-        wHighVersion: u16,
-        szDescription: [257]u8,
-        szSystemStatus: [129]u8,
-        iMaxSockets: u16,
-        iMaxUdpDg: u16,
-        lpVendorInfo: ?*anyopaque,
-    };
-    extern fn WSAStartup(wVersionRequired: u16, lpWSAData: *WSADATA) callconv(.c) c_int;
-    extern fn closesocket(s: c_int) callconv(.c) c_int;
-} else struct {};
-
-const c_net = struct {
-    extern fn socket(domain: c_int, typ: c_int, protocol: c_int) callconv(.c) c_int;
-    extern fn connect(sockfd: c_int, addr: ?*const anyopaque, addrlen: u32) callconv(.c) c_int;
-    extern fn send(sockfd: c_int, buf: [*]const u8, len: usize, flags: c_int) callconv(.c) isize;
-    extern fn recv(sockfd: c_int, buf: [*]u8, len: usize, flags: c_int) callconv(.c) isize;
-    extern fn close(fd: c_int) callconv(.c) c_int;
-    extern fn inet_addr(cp: [*:0]const u8) callconv(.c) u32;
-    extern fn htons(hostshort: u16) callconv(.c) u16;
-
-    pub fn closeSocket(s: c_int) void {
-        if (builtin.os.tag == .windows) {
-            _ = win_wsa.closesocket(s);
-        } else {
-            _ = close(s);
-        }
-    }
-};
-
-const SockAddrIn = extern struct {
-    sin_family: u16 = 2, // AF_INET
-    sin_port: u16,
-    sin_addr: u32,
-    sin_zero: [8]u8 = [_]u8{0} ** 8,
-};
+const win_sock = if (builtin.os.tag == .windows) @cImport({
+    @cInclude("winsock2.h");
+    @cInclude("ws2tcpip.h");
+}) else struct {};
 
 pub const FunctionCall = struct {
-    name: []const u8,
-    arguments: []const u8,
+    name: []const u8 = "",
+    arguments: []const u8 = "{}",
 };
 
 pub const ToolCall = struct {
-    id: []const u8,
+    id: []const u8 = "",
     type: []const u8 = "function",
-    function: FunctionCall,
+    function: FunctionCall = .{},
 };
 
 pub const Message = struct {
-    role: []const u8,
+    role: []const u8 = "assistant",
     content: ?[]const u8 = null,
     tool_calls: ?[]ToolCall = null,
     tool_call_id: ?[]const u8 = null,
 };
 
 pub const Choice = struct {
-    message: Message,
+    message: Message = .{},
     finish_reason: ?[]const u8 = null,
+    index: ?usize = null,
 };
 
 pub const ChatResponse = struct {
-    choices: []Choice,
+    choices: []Choice = &.{},
+    id: ?[]const u8 = null,
+    object: ?[]const u8 = null,
+    created: ?i64 = null,
+    model: ?[]const u8 = null,
 };
 
 pub const Config = struct {
@@ -182,6 +153,29 @@ pub const Client = struct {
         return .{ .config = cfg };
     }
 
+    fn appendJsonEscaped(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
+        try out.append(allocator, '"');
+        for (s) |c| {
+            switch (c) {
+                '"' => try out.appendSlice(allocator, "\\\""),
+                '\\' => try out.appendSlice(allocator, "\\\\"),
+                '\n' => try out.appendSlice(allocator, "\\n"),
+                '\r' => try out.appendSlice(allocator, "\\r"),
+                '\t' => try out.appendSlice(allocator, "\\t"),
+                else => {
+                    if (c < 0x20) {
+                        var hex_buf: [8]u8 = undefined;
+                        const hex = try std.fmt.bufPrint(&hex_buf, "\\u{x:0>4}", .{c});
+                        try out.appendSlice(allocator, hex);
+                    } else {
+                        try out.append(allocator, c);
+                    }
+                },
+            }
+        }
+        try out.append(allocator, '"');
+    }
+
     pub fn complete(self: *const Client, allocator: std.mem.Allocator, history: []const Message) !std.json.Parsed(ChatResponse) {
         // Build JSON request body
         var msg_buf: std.ArrayList(u8) = .empty;
@@ -191,39 +185,34 @@ pub const Client = struct {
             if (i > 0) try msg_buf.appendSlice(allocator, ",");
 
             if (msg.tool_calls) |tcs| {
-                var tc_buf: std.ArrayList(u8) = .empty;
-                defer tc_buf.deinit(allocator);
+                try msg_buf.appendSlice(allocator, "{\"role\":");
+                try appendJsonEscaped(&msg_buf, allocator, msg.role);
+                try msg_buf.appendSlice(allocator, ",\"content\":null,\"tool_calls\":[");
                 for (tcs, 0..) |tc, ti| {
-                    if (ti > 0) try tc_buf.appendSlice(allocator, ",");
-                    const tc_str = try std.fmt.allocPrint(allocator,
-                        "{{\"id\":\"{s}\",\"type\":\"function\",\"function\":{{\"name\":\"{s}\",\"arguments\":\"{s}\"}}}}",
-                        .{ tc.id, tc.function.name, tc.function.arguments },
-                    );
-                    defer allocator.free(tc_str);
-                    try tc_buf.appendSlice(allocator, tc_str);
+                    if (ti > 0) try msg_buf.appendSlice(allocator, ",");
+                    try msg_buf.appendSlice(allocator, "{\"id\":");
+                    try appendJsonEscaped(&msg_buf, allocator, tc.id);
+                    try msg_buf.appendSlice(allocator, ",\"type\":\"function\",\"function\":{\"name\":");
+                    try appendJsonEscaped(&msg_buf, allocator, tc.function.name);
+                    try msg_buf.appendSlice(allocator, ",\"arguments\":");
+                    try appendJsonEscaped(&msg_buf, allocator, tc.function.arguments);
+                    try msg_buf.appendSlice(allocator, "}}");
                 }
-                const m_str = try std.fmt.allocPrint(allocator,
-                    "{{\"role\":\"{s}\",\"content\":null,\"tool_calls\":[{s}]}}",
-                    .{ msg.role, tc_buf.items },
-                );
-                defer allocator.free(m_str);
-                try msg_buf.appendSlice(allocator, m_str);
+                try msg_buf.appendSlice(allocator, "]}");
             } else if (msg.tool_call_id) |tid| {
-                const cnt = msg.content orelse "ok";
-                const m_str = try std.fmt.allocPrint(allocator,
-                    "{{\"role\":\"{s}\",\"content\":\"{s}\",\"tool_call_id\":\"{s}\"}}",
-                    .{ msg.role, cnt, tid },
-                );
-                defer allocator.free(m_str);
-                try msg_buf.appendSlice(allocator, m_str);
+                try msg_buf.appendSlice(allocator, "{\"role\":");
+                try appendJsonEscaped(&msg_buf, allocator, msg.role);
+                try msg_buf.appendSlice(allocator, ",\"tool_call_id\":");
+                try appendJsonEscaped(&msg_buf, allocator, tid);
+                try msg_buf.appendSlice(allocator, ",\"content\":");
+                try appendJsonEscaped(&msg_buf, allocator, msg.content orelse "ok");
+                try msg_buf.appendSlice(allocator, "}");
             } else {
-                const cnt = msg.content orelse "";
-                const m_str = try std.fmt.allocPrint(allocator,
-                    "{{\"role\":\"{s}\",\"content\":\"{s}\"}}",
-                    .{ msg.role, cnt },
-                );
-                defer allocator.free(m_str);
-                try msg_buf.appendSlice(allocator, m_str);
+                try msg_buf.appendSlice(allocator, "{\"role\":");
+                try appendJsonEscaped(&msg_buf, allocator, msg.role);
+                try msg_buf.appendSlice(allocator, ",\"content\":");
+                try appendJsonEscaped(&msg_buf, allocator, msg.content orelse "");
+                try msg_buf.appendSlice(allocator, "}");
             }
         }
 
@@ -233,27 +222,46 @@ pub const Client = struct {
         );
         defer allocator.free(json_payload);
 
-        // Perform TCP HTTP Request via standard socket
+        // Perform TCP HTTP Request via Windows Sockets / POSIX
         if (builtin.os.tag == .windows) {
-            var wd: win_wsa.WSADATA = undefined;
-            _ = win_wsa.WSAStartup(0x0202, &wd);
+            var wd: win_sock.WSADATA = undefined;
+            _ = win_sock.WSAStartup(0x0202, &wd);
         }
 
-        const sockfd = c_net.socket(2, 1, 0); // AF_INET, SOCK_STREAM
-        if (sockfd < 0) return error.SocketCreateFailed;
-        defer c_net.closeSocket(sockfd);
+        const sockfd = if (builtin.os.tag == .windows)
+            win_sock.socket(win_sock.AF_INET, win_sock.SOCK_STREAM, win_sock.IPPROTO_TCP)
+        else
+            std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0) catch -1;
 
-        var host_z: [256:0]u8 = undefined;
-        @memcpy(host_z[0..self.config.host.len], self.config.host);
-        host_z[self.config.host.len] = 0;
+        if (builtin.os.tag == .windows) {
+            if (sockfd == win_sock.INVALID_SOCKET) return error.SocketCreateFailed;
+        } else {
+            if (sockfd < 0) return error.SocketCreateFailed;
+        }
 
-        const sa = SockAddrIn{
-            .sin_port = c_net.htons(self.config.port),
-            .sin_addr = c_net.inet_addr(&host_z),
-        };
+        defer {
+            if (builtin.os.tag == .windows) {
+                _ = win_sock.closesocket(sockfd);
+            } else {
+                std.posix.close(sockfd);
+            }
+        }
 
-        if (c_net.connect(sockfd, @ptrCast(&sa), @sizeOf(SockAddrIn)) != 0) {
-            return error.ConnectionRefused;
+        if (builtin.os.tag == .windows) {
+            var sa: win_sock.sockaddr_in = std.mem.zeroes(win_sock.sockaddr_in);
+            sa.sin_family = win_sock.AF_INET;
+            sa.sin_port = win_sock.htons(self.config.port);
+
+            var host_z: [256:0]u8 = undefined;
+            @memcpy(host_z[0..self.config.host.len], self.config.host);
+            host_z[self.config.host.len] = 0;
+
+            _ = win_sock.InetPtonA(win_sock.AF_INET, &host_z, &sa.sin_addr);
+
+            if (win_sock.connect(sockfd, @ptrCast(&sa), @sizeOf(win_sock.sockaddr_in)) != 0) {
+                std.debug.print("[LLM Error] Connect failed to {s}:{d} (WSA error: {d})\n", .{ self.config.host, self.config.port, win_sock.WSAGetLastError() });
+                return error.ConnectionRefused;
+            }
         }
 
         var header_buf: [512]u8 = undefined;
@@ -262,15 +270,21 @@ pub const Client = struct {
             .{ self.config.path, self.config.host, self.config.port, json_payload.len },
         );
 
-        _ = c_net.send(sockfd, header.ptr, header.len, 0);
-        _ = c_net.send(sockfd, json_payload.ptr, json_payload.len, 0);
+        if (builtin.os.tag == .windows) {
+            _ = win_sock.send(sockfd, header.ptr, @as(c_int, @intCast(header.len)), 0);
+            _ = win_sock.send(sockfd, json_payload.ptr, @as(c_int, @intCast(json_payload.len)), 0);
+        }
 
         var response_list: std.ArrayList(u8) = .empty;
         defer response_list.deinit(allocator);
 
         var read_buf: [4096]u8 = undefined;
         while (true) {
-            const n = c_net.recv(sockfd, &read_buf, read_buf.len, 0);
+            const n = if (builtin.os.tag == .windows)
+                win_sock.recv(sockfd, &read_buf, @as(c_int, @intCast(read_buf.len)), 0)
+            else
+                std.posix.read(sockfd, &read_buf) catch 0;
+
             if (n <= 0) break;
             try response_list.appendSlice(allocator, read_buf[0..@as(usize, @intCast(n))]);
         }
@@ -281,8 +295,16 @@ pub const Client = struct {
         else
             full_resp;
 
-        return std.json.parseFromSlice(ChatResponse, allocator, body, .{
+        const parsed = try std.json.parseFromSlice(ChatResponse, allocator, body, .{
             .ignore_unknown_fields = true,
         });
+
+        if (parsed.value.choices.len == 0) {
+            std.debug.print("[LLM Error] Server response has no choices: {s}\n", .{body});
+            parsed.deinit();
+            return error.NoChoicesReturned;
+        }
+
+        return parsed;
     }
 };

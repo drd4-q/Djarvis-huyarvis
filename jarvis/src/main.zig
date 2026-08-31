@@ -82,6 +82,11 @@ fn readStdinLine(buf: []u8) ?[]const u8 {
 }
 
 pub fn main() !void {
+    if (builtin.os.tag == .windows) {
+        _ = win_c.SetConsoleOutputCP(65001);
+        _ = win_c.SetConsoleCP(65001);
+    }
+
     const allocator = std.heap.c_allocator;
 
     // Load configuration (from config.json if present)
@@ -147,14 +152,19 @@ pub fn main() !void {
 
     // 5. Interactive REPL loop
     var line_buf: [4096]u8 = undefined;
+    var prompt_shown: bool = false;
     while (!tray_mod.should_exit.load(.acquire)) {
-        std.debug.print("[User]: ", .{});
+        if (!prompt_shown) {
+            std.debug.print("[User]: ", .{});
+            prompt_shown = true;
+        }
         const line = readStdinLine(&line_buf);
         if (line == null) {
             // Keep assistant alive in background/tray mode even if stdin stream is inactive
             sleepMs(250);
             continue;
         }
+        prompt_shown = false;
 
         if (tray_mod.should_exit.load(.acquire)) break;
 

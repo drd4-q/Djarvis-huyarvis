@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal
 
 :: ========================================================
@@ -8,10 +9,23 @@ setlocal
 
 set SCRIPT_DIR=%~dp0
 set PROJECT_DIR=%SCRIPT_DIR%..
-set LLAMA_SERVER_EXE=llama-server.exe
+cd /d "%PROJECT_DIR%"
 
+set LLAMA_SERVER_EXE=
 if exist "%PROJECT_DIR%\bin\llama-server.exe" (
-    set LLAMA_SERVER_EXE=%PROJECT_DIR%\bin\llama-server.exe
+    set "LLAMA_SERVER_EXE=%PROJECT_DIR%\bin\llama-server.exe"
+) else (
+    where llama-server.exe >nul 2>&1
+    if %errorlevel% equ 0 (
+        set LLAMA_SERVER_EXE=llama-server.exe
+    )
+)
+
+if "%LLAMA_SERVER_EXE%"=="" (
+    echo [ERROR] llama-server.exe not found in '%PROJECT_DIR%\bin\' or PATH!
+    echo Please run install.bat to download models and binaries automatically.
+    pause
+    exit /b 1
 )
 
 set MODEL_PATH=%PROJECT_DIR%\models\qwen2.5-3b-instruct-q4_k_m.gguf
@@ -43,6 +57,13 @@ if not exist "%MODEL_PATH%" (
     -ctk q8_0 ^
     -ctv q8_0 ^
     --flash-attn ^
+    --jinja ^
     --cont-batching
+
+if %errorlevel% neq 0 (
+    echo.
+    echo [ERROR] llama-server exited with code %errorlevel%.
+    pause
+)
 
 endlocal

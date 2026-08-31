@@ -212,6 +212,42 @@ function Ensure-Zig-Installed {
     return $false
 }
 
+function Ensure-LlamaServer-Installed {
+    Write-Host ""
+    Write-Host "[1.5] Checking llama-server engine in system:" -ForegroundColor Yellow
+    $LocalLlamaExe = Join-Path $BinDir "llama-server.exe"
+    if (Test-Path $LocalLlamaExe) {
+        Write-Host "  [+] llama-server already present: $LocalLlamaExe" -ForegroundColor Green
+        return $true
+    }
+
+    $llamaCmd = Get-Command llama-server -ErrorAction SilentlyContinue
+    if ($llamaCmd) {
+        Write-Host "  [+] llama-server found in PATH: $($llamaCmd.Source)" -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host "  [~] Downloading llama-server engine (Vulkan/GPU accelerated)..." -ForegroundColor Cyan
+    if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir -Force | Out-Null }
+    $LlamaZipUrl = "https://github.com/ggml-org/llama.cpp/releases/download/b4800/llama-b4800-bin-win-vulkan-x64.zip"
+    $LlamaZipDest = Join-Path $BinDir "llama-vulkan.zip"
+    
+    Download-FileWithProgress $LlamaZipUrl $LlamaZipDest "llama-server (Vulkan Windows x64)"
+    if (Test-Path $LlamaZipDest) {
+        try {
+            Expand-Archive -Path $LlamaZipDest -DestinationPath $BinDir -Force
+            Remove-Item $LlamaZipDest -Force -ErrorAction SilentlyContinue
+            if (Test-Path $LocalLlamaExe) {
+                Write-Host "  [OK] llama-server successfully installed in $BinDir" -ForegroundColor Green
+                return $true
+            }
+        } catch {
+            Write-Host "  [!] Error extracting llama-server archive: $_" -ForegroundColor Red
+        }
+    }
+    return $false
+}
+
 function Perform-Installation($dlLLM, $dlAudio, $addAutostart, $createDesktop, $installZig = $true) {
     Write-Host ""
     Write-Host "=======================================================" -ForegroundColor Cyan
@@ -232,6 +268,8 @@ function Perform-Installation($dlLLM, $dlAudio, $addAutostart, $createDesktop, $
         Write-Host "[1/4] LLM Model (Qwen2.5-3B-Instruct GGUF):" -ForegroundColor Yellow
         $dest = Join-Path $ModelsDir $LLM_FILE
         Download-FileWithProgress $LLM_URL $dest "LLM Qwen2.5-3B-Instruct"
+
+        Ensure-LlamaServer-Installed | Out-Null
     }
 
     if ($dlAudio) {

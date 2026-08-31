@@ -113,6 +113,9 @@ pub fn runTrayLoop() void {
         return;
     }
 
+    const hr = win_c.CoInitializeEx(null, win_c.COINIT_APARTMENTTHREADED);
+    defer if (hr == win_c.S_OK or hr == win_c.S_FALSE) win_c.CoUninitialize();
+
     const hInstance = win_c.GetModuleHandleW(null);
     const className = std.unicode.utf8ToUtf16LeStringLiteral("JarvisTrayWindowClass");
 
@@ -152,14 +155,17 @@ pub fn runTrayLoop() void {
     g_nid.cbSize = @sizeOf(win_c.NOTIFYICONDATAW);
     g_nid.hWnd = hwnd;
     g_nid.uID = 1;
-    g_nid.uFlags = win_c.NIF_MESSAGE | win_c.NIF_ICON | win_c.NIF_TIP;
+    g_nid.uFlags = win_c.NIF_MESSAGE | win_c.NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
 
-    var hIcon = win_c.LoadIconW(null, @as([*c]const u16, @ptrFromInt(32512))); // IDI_APPLICATION
+    var hIcon: ?win_c.HICON = win_c.LoadIconW(null, @as([*c]const u16, @ptrFromInt(32512))); // IDI_APPLICATION
     if (hIcon == null) {
         hIcon = win_c.LoadIconW(null, @as([*c]const u16, @ptrFromInt(32516))); // IDI_INFORMATION
     }
-    g_nid.hIcon = hIcon;
+    if (hIcon) |hi| {
+        g_nid.hIcon = hi;
+        g_nid.uFlags |= win_c.NIF_ICON;
+    }
 
     const tip_text = std.unicode.utf8ToUtf16LeStringLiteral("Jarvis AI Assistant");
     @memcpy(g_nid.szTip[0..tip_text.len], tip_text);

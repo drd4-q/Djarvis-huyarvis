@@ -58,8 +58,15 @@ pub const AppConfig = struct {
                         }
                         if (llm_obj.object.get("endpoint")) |ep| {
                             if (ep == .string) {
-                                cfg.llm_endpoint = allocator.dupe(u8, ep.string) catch cfg.llm_endpoint;
-                                parseEndpoint(ep.string, &cfg.llm_host, &cfg.llm_port);
+                                const duped_ep = allocator.dupe(u8, ep.string) catch null;
+                                if (duped_ep) |dep| {
+                                    cfg.llm_endpoint = dep;
+                                    var temp_host: []const u8 = "";
+                                    parseEndpoint(dep, &temp_host, &cfg.llm_port);
+                                    if (temp_host.len > 0) {
+                                        cfg.llm_host = allocator.dupe(u8, temp_host) catch cfg.llm_host;
+                                    }
+                                }
                             }
                         }
                     }
