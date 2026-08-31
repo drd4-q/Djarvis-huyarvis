@@ -87,8 +87,8 @@ pub const SttEngine = struct {
             self.noise_floor = @divTrunc(self.noise_floor * 31 + rms, 32);
         }
 
-        // Dynamic threshold: at least 950 RMS and 2.5x above ambient noise floor
-        const dynamic_threshold = @max(950, self.noise_floor * 3 + 400);
+        // Sensitive dynamic threshold: at least 350 RMS and well above ambient noise floor
+        const dynamic_threshold = @max(350, self.noise_floor * 2 + 150);
 
         if (rms > dynamic_threshold) {
             // Speech detected
@@ -130,7 +130,7 @@ pub const SttEngine = struct {
                         fn run(alloc: std.mem.Allocator, w_exe: []const u8, m_path: []const u8, s_data: []const i16, cb: ?*const fn (text: []const u8, udata: ?*anyopaque) void, udata: ?*anyopaque) void {
                             defer alloc.free(s_data);
 
-                            // Pre-filter: verify that the audio actually contains human voice energy
+                            // Pre-filter: verify that the audio actually contains voice energy
                             var max_peak: i32 = 0;
                             var s_sum_sq: u64 = 0;
                             for (s_data) |s| {
@@ -141,8 +141,8 @@ pub const SttEngine = struct {
                             }
                             const mean_rms: i32 = @intCast(std.math.sqrt(s_sum_sq / @as(u64, @max(1, s_data.len))));
 
-                            // Discard silence or quiet noise floor without calling Whisper
-                            if (max_peak < 1800 or mean_rms < 500) {
+                            // Only discard complete digital silence / near-zero levels
+                            if (max_peak < 600 or mean_rms < 150) {
                                 return;
                             }
 
@@ -150,13 +150,13 @@ pub const SttEngine = struct {
                             var wav_name_buf: [64]u8 = undefined;
                             const wav_file = std.fmt.bufPrint(&wav_name_buf, "cache_mic_{d}.wav", .{seq}) catch "cache_mic.wav";
 
-                            // Write WAV file
+                            // Write WAV file with clean gain
                             writeWavFile(wav_file, s_data);
 
-                            // Transcribe with whisper-cli with high speech threshold and no hallucination prompt
+                            // Transcribe with whisper-cli with no-speech threshold and zero prompt hallucinations
                             var cmd_buf: [1024]u8 = undefined;
                             const cmd_str = std.fmt.bufPrint(&cmd_buf,
-                                "{s} -m {s} -l ru -nt -np -nf -sns -nth 0.60 --best-of 5 --beam-size 5 -tp 0.0 -f {s}",
+                                "{s} -m {s} -l ru -nt -np -nf -sns -nth 0.60 -tp 0.0 -f {s}",
                                 .{ w_exe, m_path, wav_file }
                             ) catch return;
 
@@ -246,7 +246,30 @@ pub const SttEngine = struct {
         std.mem.writeInt(u32, header[40..44], data_len, .little);
 
         _ = fwrite(&header, 1, 44, f);
-        _ = fwrite(@as([*]const u8, @ptrCast(samples.ptr)), 1, data_len, f);
+
+        // Safe soft speech normalization if audio is quiet
+        var max_val: i32 = 1;
+        for (samples) |s| {
+            const abs_s: i32 = if (s < 0) -@as(i32, s) else @as(i32, s);
+            if (abs_s > max_val) max_val = abs_s;
+        }
+
+        const gain: f32 = if (max_val >= 600 and max_val < 16000)
+            @min(3.0, 20000.0 / @as(f32, @floatFromInt(max_val)))
+        else
+            1.0;
+
+        if (gain > 1.1) {
+            for (samples) |s| {
+                const scaled: f32 = @as(f32, @floatFromInt(s)) * gain;
+                const clamped: i16 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled)), -32768, 32767));
+                var s_bytes: [2]u8 = undefined;
+                std.mem.writeInt(i16, &s_bytes, clamped, .little);
+                _ = fwrite(&s_bytes, 1, 2, f);
+            }
+        } else {
+            _ = fwrite(@as([*]const u8, @ptrCast(samples.ptr)), 1, data_len, f);
+        }
     }
 
     fn cleanWhisperOutput(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
