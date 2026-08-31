@@ -310,19 +310,53 @@ pub const Router = struct {
                     .content = final_cnt,
                 });
                 self.pruneHistory();
-                return final_cnt;
+                return sanitizeResponseText(arena_alloc, final_cnt);
             }
         }
 
         self.pruneHistory();
         if (persistent_content) |c| {
-            const trimmed_c = std.mem.trim(u8, c, " \r\n\t");
-            if (std.mem.eql(u8, trimmed_c, "None") or std.mem.eql(u8, trimmed_c, "null") or trimmed_c.len == 0) {
-                return "Слушаю вас.";
-            }
-            return trimmed_c;
+            return sanitizeResponseText(arena_alloc, c);
         }
         return "Слушаю вас.";
+    }
+
+    fn sanitizeResponseText(allocator: std.mem.Allocator, input: []const u8) []const u8 {
+        const trimmed = std.mem.trim(u8, input, " \r\n\t");
+        if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "None") or std.mem.eql(u8, trimmed, "null")) {
+            return "Слушаю вас.";
+        }
+
+        var out: std.ArrayList(u8) = .empty;
+        errdefer out.deinit(allocator);
+
+        var i: usize = 0;
+        while (i < trimmed.len) {
+            // Replace punycode youtube.xn--...
+            if (i + 12 <= trimmed.len and (std.ascii.eqlIgnoreCase(trimmed[i .. i + 12], "youtube.xn--") or std.ascii.eqlIgnoreCase(trimmed[i .. i + 12], "youtu.be.xn-"))) {
+                out.appendSlice(allocator, "YouTube") catch return trimmed;
+                i += 12;
+                while (i < trimmed.len and trimmed[i] != '/' and trimmed[i] != ' ' and trimmed[i] != '\n' and trimmed[i] != ')' and trimmed[i] != '.') {
+                    i += 1;
+                }
+                continue;
+            }
+
+            // Generic .xn-- replacement
+            if (i + 5 <= trimmed.len and std.mem.eql(u8, trimmed[i .. i + 5], ".xn--")) {
+                out.appendSlice(allocator, ".com") catch return trimmed;
+                i += 5;
+                while (i < trimmed.len and trimmed[i] != '/' and trimmed[i] != ' ' and trimmed[i] != '\n' and trimmed[i] != ')' and trimmed[i] != '.') {
+                    i += 1;
+                }
+                continue;
+            }
+
+            out.append(allocator, trimmed[i]) catch return trimmed;
+            i += 1;
+        }
+
+        return out.toOwnedSlice(allocator) catch trimmed;
     }
 
     fn pruneHistory(self: *Router) void {

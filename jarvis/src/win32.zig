@@ -413,12 +413,13 @@ pub fn focusWindow(allocator: std.mem.Allocator, title_contains: []const u8) !vo
     if (builtin.os.tag != .windows) return;
 
     var ctx: WindowSearchContext = .{
-        .needle_utf16 = undefined,
+        .needle_utf16 = std.mem.zeroes([256]u16),
         .needle_len = 0,
         .found_hwnd = null,
     };
 
     const utf16_len = std.unicode.utf8ToUtf16Le(&ctx.needle_utf16, title_contains) catch return error.InvalidUtf8;
+    ctx.needle_utf16[utf16_len] = 0;
     ctx.needle_len = utf16_len;
 
     const callback = struct {
@@ -454,13 +455,15 @@ pub fn openApp(allocator: std.mem.Allocator, path: []const u8, args: ?[]const u8
     _ = allocator;
     if (builtin.os.tag != .windows) return;
 
-    var path_w: [512]u16 = undefined;
-    _ = std.unicode.utf8ToUtf16Le(&path_w, path) catch return error.InvalidUtf8;
+    var path_w: [1024:0]u16 = std.mem.zeroes([1024:0]u16);
+    const p_len = std.unicode.utf8ToUtf16Le(&path_w, path) catch return error.InvalidUtf8;
+    path_w[p_len] = 0;
 
-    var args_w: [512]u16 = undefined;
+    var args_w: [1024:0]u16 = std.mem.zeroes([1024:0]u16);
     var args_ptr: ?[*:0]const u16 = null;
     if (args) |a| {
-        _ = std.unicode.utf8ToUtf16Le(&args_w, a) catch return error.InvalidUtf8;
+        const a_len = std.unicode.utf8ToUtf16Le(&args_w, a) catch return error.InvalidUtf8;
+        args_w[a_len] = 0;
         args_ptr = @as([*:0]const u16, @ptrCast(&args_w));
     }
 
