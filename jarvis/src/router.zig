@@ -249,6 +249,19 @@ pub const Router = struct {
 
     pub fn processUserText(self: *Router, text: []const u8) ![]const u8 {
         const arena_alloc = self.arena.allocator();
+
+        // Update live continuous screen stream context in system prompt (history[0])
+        const live_context = win32.getLiveScreenContext(arena_alloc) catch "Рабочий стол Windows.";
+        const active_win = win32.getLiveActiveWindowTitle(arena_alloc) catch "Рабочий стол";
+        const dynamic_system_prompt = std.fmt.allocPrint(arena_alloc,
+            "{s}\n\n[LIVE SCREEN STREAM (ПОСТОЯННАЯ ТРАНСЛЯЦИЯ ЭКРАНА В РЕАЛЬНОМ ВРЕМЕНИ)]:\n- Активное окно прямо сейчас: «{s}»\n- Визуальный контекст экрана: «{s}»\nИспользуй эти данные, если пользователь спрашивает о том, что происходит на экране, об открытом коде, видео, тексте или программах.",
+            .{ llm.SystemPrompt, active_win, live_context }
+        ) catch llm.SystemPrompt;
+
+        if (self.history.items.len > 0 and std.mem.eql(u8, self.history.items[0].role, "system")) {
+            self.history.items[0].content = dynamic_system_prompt;
+        }
+
         const user_text_dupe = try arena_alloc.dupe(u8, text);
 
         try self.history.append(self.allocator, .{

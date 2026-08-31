@@ -244,6 +244,10 @@ pub fn main() !void {
         } else {
             _ = win32.rescanApps(allocator) catch {};
         }
+
+        // Start Continuous Live Screen Vision Watcher (Real-time SmolVLM stream)
+        std.debug.print("[Vision] Continuous screen stream and visual observer active.\n", .{});
+        win32.startContinuousVisionWatcher(allocator);
     }
 
     std.debug.print("[Jarvis] Ready. Speak into microphone or type in console.\n", .{});

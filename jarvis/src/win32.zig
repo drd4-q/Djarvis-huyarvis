@@ -659,6 +659,110 @@ extern fn pclose(stream: ?*anyopaque) c_int;
 extern fn time(timer: ?*i64) i64;
 extern fn ctime(timer: *const i64) ?[*:0]const u8;
 
+pub var g_screen_lock: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+pub var g_live_screen_description: [2048]u8 = std.mem.zeroes([2048]u8);
+pub var g_live_screen_len: usize = 0;
+pub var g_live_window_title: [512]u8 = std.mem.zeroes([512]u8);
+pub var g_live_window_len: usize = 0;
+
+pub fn getLiveScreenContext(allocator: std.mem.Allocator) ![]const u8 {
+    while (g_screen_lock.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {
+        std.atomic.spinLoopHint();
+    }
+    defer g_screen_lock.store(false, .release);
+
+    if (g_live_screen_len > 0) {
+        return try allocator.dupe(u8, g_live_screen_description[0..g_live_screen_len]);
+    }
+    if (g_live_window_len > 0) {
+        return try std.fmt.allocPrint(allocator, "Открыто окно «{s}».", .{g_live_window_title[0..g_live_window_len]});
+    }
+    return try allocator.dupe(u8, "Рабочий стол Windows.");
+}
+
+pub fn getLiveActiveWindowTitle(allocator: std.mem.Allocator) ![]const u8 {
+    while (g_screen_lock.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {
+        std.atomic.spinLoopHint();
+    }
+    defer g_screen_lock.store(false, .release);
+
+    if (g_live_window_len > 0) {
+        return try allocator.dupe(u8, g_live_window_title[0..g_live_window_len]);
+    }
+    return try allocator.dupe(u8, "Рабочий стол");
+}
+
+pub fn startContinuousVisionWatcher(allocator: std.mem.Allocator) void {
+    const VisionWorker = struct {
+        fn loop(alloc: std.mem.Allocator) void {
+            var last_title_buf: [512]u8 = std.mem.zeroes([512]u8);
+            var last_title_len: usize = 0;
+            var iterations: u32 = 0;
+
+            while (true) {
+                // Sleep 2.5 seconds between continuous observation cycles
+                if (builtin.os.tag == .windows) {
+                    win_c.Sleep(2500);
+                } else {
+                    std.time.sleep(2500 * std.time.ns_per_ms);
+                }
+                iterations += 1;
+
+                // 1. Get current active foreground window
+                var current_title_buf: [512]u8 = std.mem.zeroes([512]u8);
+                var current_title_len: usize = 0;
+
+                if (builtin.os.tag == .windows) {
+                    const hwnd = win_c.GetForegroundWindow();
+                    if (hwnd != null) {
+                        var w_title: [512]u16 = undefined;
+                        const w_len = win_c.GetWindowTextW(hwnd, @as([*c]u16, @ptrCast(&w_title)), 512);
+                        if (w_len > 0) {
+                            if (std.unicode.utf16LeToUtf8(&current_title_buf, w_title[0..@intCast(w_len)])) |u8_l| {
+                                current_title_len = u8_l;
+                            } else |_| {}
+                        }
+                    }
+                }
+
+                const window_changed = (current_title_len != last_title_len or
+                    !std.mem.eql(u8, current_title_buf[0..current_title_len], last_title_buf[0..last_title_len]));
+
+                if (window_changed) {
+                    if (current_title_len > 0) {
+                        @memcpy(last_title_buf[0..current_title_len], current_title_buf[0..current_title_len]);
+                    }
+                    last_title_len = current_title_len;
+                }
+
+                // 2. Continuous vision inference with SmolVLM if window changed or every 3 cycles (~7.5s)
+                if (window_changed or (iterations % 3 == 0)) {
+                    const desc = lookAtScreen(alloc) catch continue;
+                    defer alloc.free(desc);
+
+                    while (g_screen_lock.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {
+                        std.atomic.spinLoopHint();
+                    }
+                    if (desc.len > 0) {
+                        const copy_len = @min(desc.len, 2040);
+                        @memcpy(g_live_screen_description[0..copy_len], desc[0..copy_len]);
+                        g_live_screen_len = copy_len;
+                    }
+                    if (current_title_len > 0) {
+                        const copy_w_len = @min(current_title_len, 500);
+                        @memcpy(g_live_window_title[0..copy_w_len], current_title_buf[0..copy_w_len]);
+                        g_live_window_len = copy_w_len;
+                    }
+                    g_screen_lock.store(false, .release);
+                }
+            }
+        }
+    };
+
+    const t = std.Thread.spawn(.{}, VisionWorker.loop, .{allocator}) catch return;
+    t.detach();
+}
+
 pub fn lookAtScreen(allocator: std.mem.Allocator) ![]const u8 {
     const bmp_path = "cache_screen.bmp";
     const res = capture_screen_bmp(bmp_path);
@@ -695,7 +799,7 @@ pub fn lookAtScreen(allocator: std.mem.Allocator) ![]const u8 {
     const json_file = "cache_vlm_req.json";
     const req_fp = fopen(json_file, "wb");
     if (req_fp != null) {
-        const prefix = "{\"model\":\"smolvlm\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Describe in detail in Russian what is visible on this computer screen. Mention open windows, text, apps, browser tabs.\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/bmp;base64,";
+        const prefix = "{\"model\":\"smolvlm\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Describe concisely in Russian what is visible on this computer screen: open applications, code, browser contents, media or errors.\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/bmp;base64,";
         const suffix = "\"}}]}],\"max_tokens\":256,\"temperature\":0.2}";
         _ = fwrite(prefix.ptr, 1, prefix.len, req_fp);
         _ = fwrite(b64_buf.ptr, 1, b64_buf.len, req_fp);
