@@ -24,6 +24,7 @@ pub fn build(b: *std.Build) void {
         exe_mod.linkSystemLibrary("shell32", .{});
         exe_mod.linkSystemLibrary("ws2_32", .{});
         exe_mod.linkSystemLibrary("winmm", .{});
+        exe_mod.linkSystemLibrary("gdi32", .{});
     }
 
     const exe = b.addExecutable(.{

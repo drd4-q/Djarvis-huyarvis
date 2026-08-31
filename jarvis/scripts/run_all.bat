@@ -30,9 +30,9 @@ if not exist "zig-out\bin\jarvis.exe" (
 curl.exe -s http://127.0.0.1:8080/health >nul 2>&1
 if %errorlevel% equ 0 goto llm_ready
 
-echo [1/2] Starting Local Brain (llama-server on GPU)...
+echo [1/3] Starting Local Brain (llama-server on GPU)...
 start "Jarvis - LLM Server" /min cmd /c call "%~dp0run_llama_server.bat"
-echo [1/2] Waiting for LLM server to initialize...
+echo [1/3] Waiting for LLM server to initialize...
 
 set /a attempts=0
 :wait_llm
@@ -42,14 +42,24 @@ if %errorlevel% equ 0 goto llm_ready
 set /a attempts+=1
 if !attempts! lss 20 goto wait_llm
 echo [Warning] LLM server taking longer than usual to start. Launching Jarvis...
-goto start_jarvis
+goto check_vlm
 
 :llm_ready
-echo [1/2] LLM server is ready!
+echo [1/3] LLM server is ready!
+
+:check_vlm
+if not exist "%~dp0..\models\SmolVLM-256M-Instruct-Q8_0.gguf" goto start_jarvis
+curl.exe -s http://127.0.0.1:8081/health >nul 2>&1
+if %errorlevel% equ 0 (
+    echo [2/3] Vision server is ready!
+    goto start_jarvis
+)
+echo [2/3] Starting Vision Brain (SmolVLM-256M on GPU)...
+start "Jarvis - Vision Server" /min cmd /c call "%~dp0run_vlm_server.bat"
 
 :start_jarvis
 :: 3. Launch Unified Jarvis Assistant
-echo [2/2] Launching Jarvis Assistant...
+echo [3/3] Launching Jarvis Assistant...
 echo.
 
 if exist "zig-out\bin\jarvis.exe" (

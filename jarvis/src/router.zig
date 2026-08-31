@@ -132,6 +132,18 @@ pub const Router = struct {
                 }
             }
             return win32.fetchWebSummary(arena_alloc, query) catch "не удалось получить информацию из интернета";
+        } else if (std.mem.eql(u8, name, "read_webpage_content")) {
+            var url: []const u8 = "";
+            if (parsed_args_opt) |p| {
+                if (p.value == .object) {
+                    if (p.value.object.get("url")) |u| {
+                        if (u == .string) url = u.string;
+                    }
+                }
+            }
+            return win32.readWebpageContent(arena_alloc, url) catch "не удалось прочитать содержимое страницы";
+        } else if (std.mem.eql(u8, name, "look_at_screen")) {
+            return win32.lookAtScreen(arena_alloc) catch "не удалось проанализировать экран";
         } else if (std.mem.eql(u8, name, "minimize_all")) {
             win32.minimizeAll() catch {
                 exec_err = "failed to minimize all";

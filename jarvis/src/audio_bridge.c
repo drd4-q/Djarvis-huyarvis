@@ -96,3 +96,80 @@ void audio_bridge_deinit(void) {
         g_playback_inited = 0;
     }
 }
+
+#ifdef _WIN32
+#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+int capture_screen_bmp(const char* filepath) {
+    int x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    int w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    int h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if (w <= 0 || h <= 0) {
+        w = GetSystemMetrics(SM_CXSCREEN);
+        h = GetSystemMetrics(SM_CYSCREEN);
+    }
+
+    HDC hdcScreen = GetDC(NULL);
+    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+    HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, w, h);
+    HGDIOBJ old = SelectObject(hdcMem, hbm);
+    BitBlt(hdcMem, 0, 0, w, h, hdcScreen, x, y, SRCCOPY);
+    SelectObject(hdcMem, old);
+
+    BITMAP bmp;
+    GetObject(hbm, sizeof(BITMAP), &bmp);
+
+    BITMAPFILEHEADER bmfHeader;
+    BITMAPINFOHEADER bi;
+    memset(&bi, 0, sizeof(BITMAPINFOHEADER));
+    bi.biSize = sizeof(BITMAPINFOHEADER);
+    bi.biWidth = bmp.bmWidth;
+    bi.biHeight = bmp.bmHeight;
+    bi.biPlanes = 1;
+    bi.biBitCount = 24;
+    bi.biCompression = BI_RGB;
+
+    DWORD rowSize = ((bmp.bmWidth * 24 + 31) / 32) * 4;
+    DWORD dwBmpSize = rowSize * bmp.bmHeight;
+    char* lpBitmap = (char*)malloc(dwBmpSize);
+    if (!lpBitmap) {
+        DeleteObject(hbm);
+        DeleteDC(hdcMem);
+        ReleaseDC(NULL, hdcScreen);
+        return 0;
+    }
+
+    GetDIBits(hdcScreen, hbm, 0, (UINT)bmp.bmHeight, lpBitmap, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+
+    bmfHeader.bfOffBits = (DWORD)sizeof(BITMAPFILEHEADER) + (DWORD)sizeof(BITMAPINFOHEADER);
+    bmfHeader.bfSize = dwBmpSize + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    bmfHeader.bfType = 0x4D42; // "BM"
+    bmfHeader.bfReserved1 = 0;
+    bmfHeader.bfReserved2 = 0;
+
+    FILE* fp = fopen(filepath, "wb");
+    int success = 0;
+    if (fp) {
+        fwrite(&bmfHeader, sizeof(BITMAPFILEHEADER), 1, fp);
+        fwrite(&bi, sizeof(BITMAPINFOHEADER), 1, fp);
+        fwrite(lpBitmap, dwBmpSize, 1, fp);
+        fclose(fp);
+        success = 1;
+    }
+
+    free(lpBitmap);
+    DeleteObject(hbm);
+    DeleteDC(hdcMem);
+    ReleaseDC(NULL, hdcScreen);
+    return success;
+}
+#else
+int capture_screen_bmp(const char* filepath) {
+    (void)filepath;
+    return 0;
+}
+#endif
+

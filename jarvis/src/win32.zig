@@ -258,52 +258,91 @@ pub fn urlEncode(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
     return out.toOwnedSlice(allocator);
 }
 
-pub fn resolveSiteUrl(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
-    const trimmed = std.mem.trim(u8, input, " \r\n\t");
+pub fn sanitizeUrl(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+    const trimmed = std.mem.trim(u8, input, " \r\n\t'\"<>");
+
+    // Fix punycode hallucinations (e.g. youtube.xn--com-ls0a349bjl7h3xi54br7g -> youtube.com)
+    if (std.mem.indexOf(u8, trimmed, "youtube") != null or std.mem.indexOf(u8, trimmed, "youtu.be") != null or std.mem.indexOf(u8, trimmed, "ютуб") != null or std.mem.indexOf(u8, trimmed, "ютюб") != null) {
+        if (std.mem.indexOf(u8, trimmed, "watch?v=") != null) {
+            const v_idx = std.mem.indexOf(u8, trimmed, "watch?v=").?;
+            return try std.fmt.allocPrint(allocator, "https://www.youtube.com/{s}", .{trimmed[v_idx..]});
+        }
+        return try allocator.dupe(u8, "https://www.youtube.com");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "vk.com") != null or std.mem.indexOf(u8, trimmed, "vkontakte") != null or std.mem.indexOf(u8, trimmed, "вк") != null) {
+        return try allocator.dupe(u8, "https://vk.com");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "yandex") != null or std.mem.indexOf(u8, trimmed, "ya.ru") != null or std.mem.indexOf(u8, trimmed, "яндекс") != null) {
+        return try allocator.dupe(u8, "https://ya.ru");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "google") != null or std.mem.indexOf(u8, trimmed, "гугл") != null) {
+        return try allocator.dupe(u8, "https://www.google.com");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "github") != null or std.mem.indexOf(u8, trimmed, "гитхаб") != null) {
+        return try allocator.dupe(u8, "https://github.com");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "telegram") != null or std.mem.indexOf(u8, trimmed, "t.me") != null or std.mem.indexOf(u8, trimmed, "телеграм") != null) {
+        return try allocator.dupe(u8, "https://web.telegram.org");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "wikipedia") != null or std.mem.indexOf(u8, trimmed, "википедия") != null) {
+        return try allocator.dupe(u8, "https://ru.wikipedia.org");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "mail.ru") != null or std.mem.indexOf(u8, trimmed, "почта") != null) {
+        return try allocator.dupe(u8, "https://mail.ru");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "kinopoisk") != null or std.mem.indexOf(u8, trimmed, "кинопоиск") != null) {
+        return try allocator.dupe(u8, "https://kinopoisk.ru");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "gosuslugi") != null or std.mem.indexOf(u8, trimmed, "госуслуги") != null) {
+        return try allocator.dupe(u8, "https://gosuslugi.ru");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "ozon") != null or std.mem.indexOf(u8, trimmed, "озон") != null) {
+        return try allocator.dupe(u8, "https://ozon.ru");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "wildberries") != null or std.mem.indexOf(u8, trimmed, "вайлдберриз") != null or std.mem.indexOf(u8, trimmed, "вб") != null) {
+        return try allocator.dupe(u8, "https://wildberries.ru");
+    }
+
+    if (std.mem.indexOf(u8, trimmed, "steam") != null or std.mem.indexOf(u8, trimmed, "стим") != null) {
+        return try allocator.dupe(u8, "https://store.steampowered.com");
+    }
+
+    // Strip punycode domains
+    if (std.mem.indexOf(u8, trimmed, ".xn--") != null) {
+        const xn_idx = std.mem.indexOf(u8, trimmed, ".xn--").?;
+        const domain_prefix = trimmed[0..xn_idx];
+        if (std.mem.startsWith(u8, domain_prefix, "http://") or std.mem.startsWith(u8, domain_prefix, "https://")) {
+            return try std.fmt.allocPrint(allocator, "{s}.com", .{domain_prefix});
+        }
+        return try std.fmt.allocPrint(allocator, "https://{s}.com", .{domain_prefix});
+    }
 
     if (std.mem.startsWith(u8, trimmed, "http://") or std.mem.startsWith(u8, trimmed, "https://")) {
         return try allocator.dupe(u8, trimmed);
     }
 
-    if (std.ascii.eqlIgnoreCase(trimmed, "youtube") or std.mem.eql(u8, trimmed, "ютуб") or std.mem.eql(u8, trimmed, "ютюб")) {
-        return try allocator.dupe(u8, "https://youtube.com");
-    } else if (std.ascii.eqlIgnoreCase(trimmed, "vk") or std.mem.eql(u8, trimmed, "вк") or std.mem.eql(u8, trimmed, "вконтакте")) {
-        return try allocator.dupe(u8, "https://vk.com");
-    } else if (std.ascii.eqlIgnoreCase(trimmed, "yandex") or std.mem.eql(u8, trimmed, "яндекс") or std.mem.eql(u8, trimmed, "я")) {
-        return try allocator.dupe(u8, "https://ya.ru");
-    } else if (std.ascii.eqlIgnoreCase(trimmed, "google") or std.mem.eql(u8, trimmed, "гугл")) {
-        return try allocator.dupe(u8, "https://google.com");
-    } else if (std.ascii.eqlIgnoreCase(trimmed, "github") or std.mem.eql(u8, trimmed, "гитхаб")) {
-        return try allocator.dupe(u8, "https://github.com");
-    } else if (std.ascii.eqlIgnoreCase(trimmed, "telegram") or std.mem.eql(u8, trimmed, "телеграм") or std.mem.eql(u8, trimmed, "телега")) {
-        return try allocator.dupe(u8, "https://web.telegram.org");
-    } else if (std.mem.eql(u8, trimmed, "википедия") or std.ascii.eqlIgnoreCase(trimmed, "wikipedia")) {
-        return try allocator.dupe(u8, "https://ru.wikipedia.org");
-    } else if (std.mem.eql(u8, trimmed, "почта") or std.ascii.eqlIgnoreCase(trimmed, "mail")) {
-        return try allocator.dupe(u8, "https://mail.ru");
-    } else if (std.mem.eql(u8, trimmed, "кинопоиск")) {
-        return try allocator.dupe(u8, "https://kinopoisk.ru");
-    } else if (std.mem.eql(u8, trimmed, "госуслуги")) {
-        return try allocator.dupe(u8, "https://gosuslugi.ru");
-    } else if (std.mem.eql(u8, trimmed, "погода")) {
-        return try allocator.dupe(u8, "https://yandex.ru/pogoda");
-    } else if (std.mem.eql(u8, trimmed, "новости")) {
-        return try allocator.dupe(u8, "https://dzen.ru/news");
-    } else if (std.mem.eql(u8, trimmed, "озон") or std.ascii.eqlIgnoreCase(trimmed, "ozon")) {
-        return try allocator.dupe(u8, "https://ozon.ru");
-    } else if (std.mem.eql(u8, trimmed, "вайлдберриз") or std.mem.eql(u8, trimmed, "вб") or std.ascii.eqlIgnoreCase(trimmed, "wildberries")) {
-        return try allocator.dupe(u8, "https://wildberries.ru");
-    } else if (std.mem.eql(u8, trimmed, "маркет")) {
-        return try allocator.dupe(u8, "https://market.yandex.ru");
-    } else if (std.mem.eql(u8, trimmed, "стим") or std.ascii.eqlIgnoreCase(trimmed, "steam")) {
-        return try allocator.dupe(u8, "https://store.steampowered.com");
-    } else if (std.mem.indexOf(u8, trimmed, ".") != null and std.mem.indexOf(u8, trimmed, " ") == null) {
+    if (std.mem.indexOf(u8, trimmed, ".") != null and std.mem.indexOf(u8, trimmed, " ") == null) {
         return try std.fmt.allocPrint(allocator, "https://{s}", .{trimmed});
     }
 
     const encoded = try urlEncode(allocator, trimmed);
     defer allocator.free(encoded);
     return try std.fmt.allocPrint(allocator, "https://www.google.com/search?q={s}", .{encoded});
+}
+
+pub fn resolveSiteUrl(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+    return sanitizeUrl(allocator, input);
 }
 
 pub fn openUrl(allocator: std.mem.Allocator, raw_url: []const u8) !void {
@@ -439,11 +478,173 @@ pub fn openApp(allocator: std.mem.Allocator, path: []const u8, args: ?[]const u8
     }
 }
 
+pub extern fn capture_screen_bmp(filepath: [*:0]const u8) c_int;
+extern fn fopen(filename: [*:0]const u8, modes: [*:0]const u8) ?*anyopaque;
+extern fn fclose(stream: ?*anyopaque) c_int;
+extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: ?*anyopaque) usize;
+extern fn fwrite(ptr: [*]const u8, size: usize, nmemb: usize, stream: ?*anyopaque) usize;
+extern fn fseek(stream: ?*anyopaque, offset: c_long, origin: c_int) c_int;
+extern fn ftell(stream: ?*anyopaque) c_long;
 extern fn popen(command: [*:0]const u8, modes: [*:0]const u8) ?*anyopaque;
 extern fn pclose(stream: ?*anyopaque) c_int;
-extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: ?*anyopaque) usize;
 extern fn time(timer: ?*i64) i64;
 extern fn ctime(timer: *const i64) ?[*:0]const u8;
+
+pub fn lookAtScreen(allocator: std.mem.Allocator) ![]const u8 {
+    const bmp_path = "cache_screen.bmp";
+    const res = capture_screen_bmp(bmp_path);
+    if (res == 0) {
+        return "Не удалось сделать снимок экрана.";
+    }
+
+    const fp = fopen(bmp_path, "rb");
+    if (fp == null) {
+        return "Ошибка чтения снимка экрана.";
+    }
+    defer _ = fclose(fp);
+
+    _ = fseek(fp, 0, 2); // SEEK_END
+    const file_size_c = ftell(fp);
+    _ = fseek(fp, 0, 0); // SEEK_SET
+
+    if (file_size_c <= 0 or file_size_c > 20 * 1024 * 1024) {
+        return "Некорректный размер снимка экрана.";
+    }
+    const file_size: usize = @intCast(file_size_c);
+    const img_buf = try allocator.alloc(u8, file_size);
+    defer allocator.free(img_buf);
+    const n_read = fread(img_buf.ptr, 1, file_size, fp);
+    if (n_read == 0) return "Не удалось прочитать данные экрана.";
+
+    const encoder = std.base64.standard.Encoder;
+    const b64_len = encoder.calcSize(img_buf.len);
+    const b64_buf = try allocator.alloc(u8, b64_len);
+    defer allocator.free(b64_buf);
+    _ = encoder.encode(b64_buf, img_buf);
+
+    // Call SmolVLM Vision server on port 8081 via JSON request file
+    const json_file = "cache_vlm_req.json";
+    const req_fp = fopen(json_file, "wb");
+    if (req_fp != null) {
+        const prefix = "{\"model\":\"smolvlm\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Describe in detail in Russian what is visible on this computer screen. Mention open windows, text, apps, browser tabs.\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/bmp;base64,";
+        const suffix = "\"}}]}],\"max_tokens\":256,\"temperature\":0.2}";
+        _ = fwrite(prefix.ptr, 1, prefix.len, req_fp);
+        _ = fwrite(b64_buf.ptr, 1, b64_buf.len, req_fp);
+        _ = fwrite(suffix.ptr, 1, suffix.len, req_fp);
+        _ = fclose(req_fp);
+
+        const vlm_out = executeCommand(allocator, "curl.exe -s -X POST http://127.0.0.1:8081/v1/chat/completions -H \"Content-Type: application/json\" -d @cache_vlm_req.json --max-time 10") catch "";
+        if (vlm_out.len > 20) {
+            if (std.json.parseFromSlice(std.json.Value, allocator, vlm_out, .{})) |parsed| {
+                defer parsed.deinit();
+                if (parsed.value == .object) {
+                    if (parsed.value.object.get("choices")) |choices| {
+                        if (choices == .array and choices.array.items.len > 0) {
+                            const choice0 = choices.array.items[0];
+                            if (choice0 == .object) {
+                                if (choice0.object.get("message")) |msg| {
+                                    if (msg == .object) {
+                                        if (msg.object.get("content")) |cnt| {
+                                            if (cnt == .string and cnt.string.len > 0) {
+                                                return try allocator.dupe(u8, cnt.string);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else |_| {}
+        }
+    }
+
+    // Fallback: active window title
+    var fg_title: [512]u16 = undefined;
+    const hwnd = win_c.GetForegroundWindow();
+    if (hwnd != null) {
+        const len = win_c.GetWindowTextW(hwnd, @as([*c]u16, @ptrCast(&fg_title)), 512);
+        if (len > 0) {
+            var title_u8: [512]u8 = undefined;
+            const u8_len = std.unicode.utf16LeToUtf8(&title_u8, fg_title[0..@intCast(len)]) catch 0;
+            if (u8_len > 0) {
+                return try std.fmt.allocPrint(allocator, "Снимок экрана сделан. Активное окно: «{s}».", .{title_u8[0..u8_len]});
+            }
+        }
+    }
+
+    return "Снимок экрана сохранен в cache_screen.bmp.";
+}
+
+pub fn readWebpageContent(allocator: std.mem.Allocator, raw_url: []const u8) ![]const u8 {
+    const resolved = try resolveSiteUrl(allocator, raw_url);
+    defer allocator.free(resolved);
+
+    const cmd = try std.fmt.allocPrint(allocator, "curl.exe -s -L --max-time 5 -A \"Mozilla/5.0\" \"{s}\"", .{resolved});
+    defer allocator.free(cmd);
+
+    const html = executeCommand(allocator, cmd) catch {
+        return "Не удалось загрузить веб-страницу.";
+    };
+
+    if (html.len == 0) return "Веб-страница пуста или не отвечает.";
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var in_tag = false;
+    var in_script = false;
+    var last_space = false;
+    var i: usize = 0;
+
+    while (i < html.len and out.items.len < 1200) {
+        const c = html[i];
+        if (c == '<') {
+            in_tag = true;
+            if (i + 7 <= html.len and std.ascii.eqlIgnoreCase(html[i .. i + 7], "<script")) {
+                in_script = true;
+            } else if (i + 6 <= html.len and std.ascii.eqlIgnoreCase(html[i .. i + 6], "<style")) {
+                in_script = true;
+            } else if (i + 9 <= html.len and std.ascii.eqlIgnoreCase(html[i .. i + 9], "</script>")) {
+                in_script = false;
+                i += 9;
+                in_tag = false;
+                continue;
+            } else if (i + 8 <= html.len and std.ascii.eqlIgnoreCase(html[i .. i + 8], "</style>")) {
+                in_script = false;
+                i += 8;
+                in_tag = false;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if (c == '>') {
+            in_tag = false;
+            i += 1;
+            continue;
+        }
+
+        if (!in_tag and !in_script) {
+            if (c == '\r' or c == '\n' or c == '\t' or c == ' ') {
+                if (!last_space and out.items.len > 0) {
+                    try out.append(allocator, ' ');
+                    last_space = true;
+                }
+            } else if (c >= 32) {
+                try out.append(allocator, c);
+                last_space = false;
+            }
+        }
+        i += 1;
+    }
+
+    if (out.items.len == 0) {
+        return "Содержимое страницы не содержит читаемого текста.";
+    }
+
+    return out.toOwnedSlice(allocator);
+}
 
 fn executeCommandRaw(command: []const u8) []const u8 {
     var cmd_z: [4096:0]u8 = undefined;

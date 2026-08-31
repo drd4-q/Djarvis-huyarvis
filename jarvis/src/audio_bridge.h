@@ -21,6 +21,8 @@ int audio_bridge_start(void);
 void audio_bridge_stop(void);
 void audio_bridge_deinit(void);
 
+int capture_screen_bmp(const char* filepath);
+
 #ifdef __cplusplus
 }
 #endif
