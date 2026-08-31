@@ -60,12 +60,12 @@ pub const TOOLS_SCHEMA_JSON =
     \\    "type": "function",
     \\    "function": {
     \\      "name": "set_volume",
-    \\      "description": "Set system master audio volume or mute state on Windows.",
+    \\      "description": "Set master system volume (0.0 to 1.0) or mute.",
     \\      "parameters": {
     \\        "type": "object",
     \\        "properties": {
-    \\          "level": { "type": "number", "description": "Volume scalar from 0.0 to 1.0", "minimum": 0.0, "maximum": 1.0 },
-    \\          "mute": { "type": "boolean", "description": "Optional mute flag" }
+    \\          "level": { "type": "number", "description": "Volume scalar 0.0 to 1.0" },
+    \\          "mute": { "type": "boolean", "description": "Optional mute state" }
     \\        },
     \\        "required": ["level"]
     \\      }
@@ -74,16 +74,8 @@ pub const TOOLS_SCHEMA_JSON =
     \\  {
     \\    "type": "function",
     \\    "function": {
-    \\      "name": "lock_workstation",
-    \\      "description": "Immediately lock the Windows workstation / user session.",
-    \\      "parameters": { "type": "object", "properties": {} }
-    \\    }
-    \\  },
-    \\  {
-    \\    "type": "function",
-    \\    "function": {
     \\      "name": "media_key",
-    \\      "description": "Send a multimedia hardware key event (play_pause, next, prev, vol_up, vol_down, mute).",
+    \\      "description": "Control playback: play_pause, next, prev, vol_up, vol_down, mute.",
     \\      "parameters": {
     \\        "type": "object",
     \\        "properties": {
@@ -96,27 +88,13 @@ pub const TOOLS_SCHEMA_JSON =
     \\  {
     \\    "type": "function",
     \\    "function": {
-    \\      "name": "focus_window",
-    \\      "description": "Bring an active application window to the foreground by title substring.",
-    \\      "parameters": {
-    \\        "type": "object",
-    \\        "properties": {
-    \\          "title_contains": { "type": "string", "description": "Substring of window title" }
-    \\        },
-    \\        "required": ["title_contains"]
-    \\      }
-    \\    }
-    \\  },
-    \\  {
-    \\    "type": "function",
-    \\    "function": {
     \\      "name": "open_app",
-    \\      "description": "Launch or open an application or executable.",
+    \\      "description": "Open any Windows app or program (e.g. 'notepad', 'calc', 'explorer', 'taskmgr', 'msedge', 'cmd', 'mspaint', 'settings').",
     \\      "parameters": {
     \\        "type": "object",
     \\        "properties": {
-    \\          "path": { "type": "string", "description": "Executable or shell URI (e.g. 'notepad', 'calc', 'msedge')" },
-    \\          "args": { "type": "string", "description": "Optional command line arguments" }
+    \\          "path": { "type": "string", "description": "App name or path" },
+    \\          "args": { "type": "string", "description": "Optional arguments" }
     \\        },
     \\        "required": ["path"]
     \\      }
@@ -125,20 +103,168 @@ pub const TOOLS_SCHEMA_JSON =
     \\  {
     \\    "type": "function",
     \\    "function": {
-    \\      "name": "get_system_info",
-    \\      "description": "Get current operating system, hardware architecture, and current date/time.",
+    \\      "name": "open_url",
+    \\      "description": "Open website URL in default browser (e.g. 'https://youtube.com', 'https://github.com').",
+    \\      "parameters": {
+    \\        "type": "object",
+    \\        "properties": {
+    \\          "url": { "type": "string", "description": "Full URL" }
+    \\        },
+    \\        "required": ["url"]
+    \\      }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "search_web",
+    \\      "description": "Search the internet via browser (Google).",
+    \\      "parameters": {
+    \\        "type": "object",
+    \\        "properties": {
+    \\          "query": { "type": "string", "description": "Search query" }
+    \\        },
+    \\        "required": ["query"]
+    \\      }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "fetch_web_info",
+    \\      "description": "Fetch live online knowledge, encyclopedic facts, and web summaries for a query without opening the browser.",
+    \\      "parameters": {
+    \\        "type": "object",
+    \\        "properties": {
+    \\          "query": { "type": "string", "description": "Topic or search query" }
+    \\        },
+    \\        "required": ["query"]
+    \\      }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "minimize_all",
+    \\      "description": "Minimize all open windows and show the Desktop (Win+D).",
     \\      "parameters": { "type": "object", "properties": {} }
     \\    }
     \\  },
     \\  {
     \\    "type": "function",
     \\    "function": {
-    \\      "name": "run_command",
-    \\      "description": "Execute a shell / terminal command and return the output.",
+    \\      "name": "close_active_window",
+    \\      "description": "Close currently active window (Alt+F4).",
+    \\      "parameters": { "type": "object", "properties": {} }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "focus_window",
+    \\      "description": "Bring an open window to the front by title name.",
     \\      "parameters": {
     \\        "type": "object",
     \\        "properties": {
-    \\          "command": { "type": "string", "description": "Shell command line to execute" }
+    \\          "title_contains": { "type": "string", "description": "Window title" }
+    \\        },
+    \\        "required": ["title_contains"]
+    \\      }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "lock_workstation",
+    \\      "description": "Lock Windows screen immediately.",
+    \\      "parameters": { "type": "object", "properties": {} }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "shutdown_pc",
+    \\      "description": "Turn off or restart computer.",
+    \\      "parameters": {
+    \\        "type": "object",
+    \\        "properties": {
+    \\          "restart": { "type": "boolean", "description": "True for restart, false for shutdown" },
+    \\          "delay_sec": { "type": "integer", "description": "Delay in seconds" }
+    \\        }
+    \\      }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "cancel_shutdown",
+    \\      "description": "Cancel scheduled shutdown or restart.",
+    \\      "parameters": { "type": "object", "properties": {} }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "sleep_pc",
+    \\      "description": "Put PC into sleep mode.",
+    \\      "parameters": { "type": "object", "properties": {} }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "empty_recycle_bin",
+    \\      "description": "Clean / empty Windows Recycle Bin.",
+    \\      "parameters": { "type": "object", "properties": {} }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "take_screenshot",
+    \\      "description": "Take full screen screenshot and save to Pictures.",
+    \\      "parameters": { "type": "object", "properties": {} }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "get_battery_status",
+    \\      "description": "Check battery percentage and charging status.",
+    \\      "parameters": { "type": "object", "properties": {} }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "get_system_info",
+    \\      "description": "Get current time, RAM usage, and OS status.",
+    \\      "parameters": { "type": "object", "properties": {} }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "press_key",
+    \\      "description": "Press keyboard hotkey (e.g. 'alt+tab', 'ctrl+c', 'ctrl+v', 'enter', 'space').",
+    \\      "parameters": {
+    \\        "type": "object",
+    \\        "properties": {
+    \\          "key": { "type": "string", "description": "Key name or combination" }
+    \\        },
+    \\        "required": ["key"]
+    \\      }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "run_command",
+    \\      "description": "Execute a shell command in Windows.",
+    \\      "parameters": {
+    \\        "type": "object",
+    \\        "properties": {
+    \\          "command": { "type": "string", "description": "Command to run" }
     \\        },
     \\        "required": ["command"]
     \\      }

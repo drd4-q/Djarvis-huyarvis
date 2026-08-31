@@ -31,6 +31,10 @@ pub const SpinLock = struct {
     pub fn unlock(self: *SpinLock) void {
         self.state.store(false, .release);
     }
+
+    pub fn isLocked(self: *const SpinLock) bool {
+        return self.state.load(.acquire);
+    }
 };
 
 pub const AudioRingBuffer = struct {

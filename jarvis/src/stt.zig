@@ -36,10 +36,17 @@ pub const SttEngine = struct {
     }
 
     pub fn init(allocator: std.mem.Allocator) SttEngine {
+        var m_path: []const u8 = "models\\ggml-base.bin";
+        const f_small = fopen("models\\ggml-small.bin", "rb");
+        if (f_small != null) {
+            _ = fclose(f_small);
+            m_path = "models\\ggml-small.bin";
+        }
+
         return .{
             .allocator = allocator,
             .whisper_exe = "bin\\whisper\\whisper-cli.exe",
-            .model_path = "models\\ggml-base.bin",
+            .model_path = m_path,
             .speech_samples = .empty,
         };
     }

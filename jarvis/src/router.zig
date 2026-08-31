@@ -63,10 +63,6 @@ pub const Router = struct {
             win32.setVolume(level, mute) catch {
                 exec_err = "failed to set volume";
             };
-        } else if (std.mem.eql(u8, name, "lock_workstation")) {
-            win32.lockWorkstation() catch {
-                exec_err = "failed to lock workstation";
-            };
         } else if (std.mem.eql(u8, name, "media_key")) {
             var key: win32.MediaKey = .play_pause;
             if (parsed_args_opt) |p| {
@@ -86,18 +82,6 @@ pub const Router = struct {
             win32.sendMediaKey(key) catch {
                 exec_err = "failed to send media key";
             };
-        } else if (std.mem.eql(u8, name, "focus_window")) {
-            var title: []const u8 = "";
-            if (parsed_args_opt) |p| {
-                if (p.value == .object) {
-                    if (p.value.object.get("title_contains")) |t| {
-                        if (t == .string) title = t.string;
-                    }
-                }
-            }
-            win32.focusWindow(arena_alloc, title) catch {
-                exec_err = "window not found or focus failed";
-            };
         } else if (std.mem.eql(u8, name, "open_app")) {
             var path: []const u8 = "";
             var args: ?[]const u8 = null;
@@ -114,8 +98,110 @@ pub const Router = struct {
             win32.openApp(arena_alloc, path, args) catch {
                 exec_err = "failed to launch app";
             };
+        } else if (std.mem.eql(u8, name, "open_url")) {
+            var url: []const u8 = "";
+            if (parsed_args_opt) |p| {
+                if (p.value == .object) {
+                    if (p.value.object.get("url")) |u| {
+                        if (u == .string) url = u.string;
+                    }
+                }
+            }
+            win32.openUrl(arena_alloc, url) catch {
+                exec_err = "failed to open url";
+            };
+        } else if (std.mem.eql(u8, name, "search_web")) {
+            var query: []const u8 = "";
+            if (parsed_args_opt) |p| {
+                if (p.value == .object) {
+                    if (p.value.object.get("query")) |q| {
+                        if (q == .string) query = q.string;
+                    }
+                }
+            }
+            win32.searchWeb(arena_alloc, query) catch {
+                exec_err = "failed to search web";
+            };
+        } else if (std.mem.eql(u8, name, "fetch_web_info")) {
+            var query: []const u8 = "";
+            if (parsed_args_opt) |p| {
+                if (p.value == .object) {
+                    if (p.value.object.get("query")) |q| {
+                        if (q == .string) query = q.string;
+                    }
+                }
+            }
+            return win32.fetchWebSummary(arena_alloc, query) catch "не удалось получить информацию из интернета";
+        } else if (std.mem.eql(u8, name, "minimize_all")) {
+            win32.minimizeAll() catch {
+                exec_err = "failed to minimize all";
+            };
+        } else if (std.mem.eql(u8, name, "close_active_window")) {
+            win32.closeActiveWindow() catch {
+                exec_err = "failed to close active window";
+            };
+        } else if (std.mem.eql(u8, name, "focus_window")) {
+            var title: []const u8 = "";
+            if (parsed_args_opt) |p| {
+                if (p.value == .object) {
+                    if (p.value.object.get("title_contains")) |t| {
+                        if (t == .string) title = t.string;
+                    }
+                }
+            }
+            win32.focusWindow(arena_alloc, title) catch {
+                exec_err = "window not found";
+            };
+        } else if (std.mem.eql(u8, name, "lock_workstation")) {
+            win32.lockWorkstation() catch {
+                exec_err = "failed to lock workstation";
+            };
+        } else if (std.mem.eql(u8, name, "shutdown_pc")) {
+            var restart = false;
+            var delay: u32 = 10;
+            if (parsed_args_opt) |p| {
+                if (p.value == .object) {
+                    if (p.value.object.get("restart")) |r| {
+                        if (r == .bool) restart = r.bool;
+                    }
+                    if (p.value.object.get("delay_sec")) |d| {
+                        if (d == .integer) delay = @intCast(@max(0, d.integer));
+                    }
+                }
+            }
+            win32.shutdownPC(delay, restart) catch {
+                exec_err = "failed to shutdown pc";
+            };
+        } else if (std.mem.eql(u8, name, "cancel_shutdown")) {
+            win32.cancelShutdown() catch {
+                exec_err = "failed to cancel shutdown";
+            };
+        } else if (std.mem.eql(u8, name, "sleep_pc")) {
+            win32.sleepPC() catch {
+                exec_err = "failed to sleep pc";
+            };
+        } else if (std.mem.eql(u8, name, "empty_recycle_bin")) {
+            win32.emptyRecycleBin() catch {
+                exec_err = "failed to empty recycle bin";
+            };
+        } else if (std.mem.eql(u8, name, "take_screenshot")) {
+            return win32.takeScreenshot(arena_alloc) catch "failed to take screenshot";
+        } else if (std.mem.eql(u8, name, "get_battery_status")) {
+            return win32.getBatteryStatus(arena_alloc) catch "failed to get battery status";
         } else if (std.mem.eql(u8, name, "get_system_info")) {
             return win32.getSystemInfo(arena_alloc) catch "failed to retrieve system info";
+        } else if (std.mem.eql(u8, name, "press_key")) {
+            var key: []const u8 = "";
+            if (parsed_args_opt) |p| {
+                if (p.value == .object) {
+                    if (p.value.object.get("key")) |k| {
+                        if (k == .string) key = k.string;
+                    }
+                }
+            }
+            win32.pressKeyCombination(key) catch {
+                exec_err = "failed to press key";
+            };
         } else if (std.mem.eql(u8, name, "run_command")) {
             var cmd: []const u8 = "";
             if (parsed_args_opt) |p| {

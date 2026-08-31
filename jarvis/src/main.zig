@@ -56,6 +56,8 @@ var global_app: AppState = .{};
 
 fn onMicCapture(chunk: []const u8, user_data: ?*anyopaque) void {
     _ = user_data;
+    // Discard microphone input while assistant is processing or speaking to prevent echo loop
+    if (global_app.busy_lock.isLocked()) return;
     if (global_app.stt_engine) |stt| {
         stt.processMicChunk(chunk);
     }
@@ -111,6 +113,43 @@ fn readStdinLine(buf: []u8) ?[]const u8 {
     }
 }
 
+fn printHelp() void {
+    std.debug.print("\n", .{});
+    std.debug.print("========================================================================\n", .{});
+    std.debug.print("                СПИСОК КОМАНД И ВОЗМОЖНОСТЕЙ JARVIS                     \n", .{});
+    std.debug.print("========================================================================\n", .{});
+    std.debug.print("  🔊 ЗВУК И МУЛЬТИМЕДИА:\n", .{});
+    std.debug.print("    • «Сделай громкость 50%» / «Звук на максимум» / «Потише»\n", .{});
+    std.debug.print("    • «Выключи звук» (Mute) / «Включи звук»\n", .{});
+    std.debug.print("    • «Поставь на паузу» / «Продолжи воспроизведение»\n", .{});
+    std.debug.print("    • «Следующий трек» / «Предыдущий трек»\n\n", .{});
+
+    std.debug.print("  🚀 ПРИЛОЖЕНИЯ И ИНТЕРНЕТ:\n", .{});
+    std.debug.print("    • «Открой Блокнот / Калькулятор / Диспетчер задач / Paint»\n", .{});
+    std.debug.print("    • «Открой браузер» / «Открой YouTube / GitHub / Telegram»\n", .{});
+    std.debug.print("    • «Найди в интернете: курс биткоина»\n\n", .{});
+
+    std.debug.print("  💻 УПРАВЛЕНИЕ ОКНАМИ:\n", .{});
+    std.debug.print("    • «Сверни все окна» / «Покажи рабочий стол»\n", .{});
+    std.debug.print("    • «Закрой окно» / «Закрой вкладку»\n", .{});
+    std.debug.print("    • «Переключись на окно Telegram / Chrome / VS Code»\n\n", .{});
+
+    std.debug.print("  ⚡ СИСТЕМА И ПИТАНИЕ:\n", .{});
+    std.debug.print("    • «Заблокируй компьютер»\n", .{});
+    std.debug.print("    • «Выключи компьютер через 5 минут» / «Перезагрузи ПК»\n", .{});
+    std.debug.print("    • «Отмени выключение компьютера»\n", .{});
+    std.debug.print("    • «Переведи компьютер в спящий режим»\n\n", .{});
+
+    std.debug.print("  🛠️ УТИЛИТЫ И ИНФОРМАЦИЯ:\n", .{});
+    std.debug.print("    • «Сделай скриншот» (сохраняется в папку Изображения)\n", .{});
+    std.debug.print("    • «Очисти корзину»\n", .{});
+    std.debug.print("    • «Сколько сейчас времени?» / «Какой сегодня день?»\n", .{});
+    std.debug.print("    • «Сколько заряда батареи?»\n", .{});
+    std.debug.print("    • «Какая нагрузка на систему / сколько свободной памяти?»\n", .{});
+    std.debug.print("    • «Выполни команду: ping 8.8.8.8»\n", .{});
+    std.debug.print("========================================================================\n\n", .{});
+}
+
 pub fn main() !void {
     if (builtin.os.tag == .windows) {
         _ = win_c.SetConsoleOutputCP(65001);
@@ -126,7 +165,7 @@ pub fn main() !void {
     std.debug.print("  JARVIS AI ASSISTANT (Monolithic Unified Engine - Zig 0.16) \n", .{});
     std.debug.print("  [Profile]: {s}\n", .{app_cfg.resource_profile});
     std.debug.print("  [LLM]: {s} @ {s}:{d}\n", .{ app_cfg.llm_model, app_cfg.llm_host, app_cfg.llm_port });
-    std.debug.print("  [STT]: Whisper Base (16kHz VAD Mic Capture)                \n", .{});
+    std.debug.print("  [STT]: Whisper Base/Small (16kHz VAD Mic Capture)          \n", .{});
     std.debug.print("  [TTS]: Piper Neural Voice (ru_RU-dmitri) + Windows SAPI     \n", .{});
     std.debug.print("  [Tools]: Direct Win32 / POSIX In-Memory Control             \n", .{});
     std.debug.print("==============================================================\n\n", .{});
@@ -190,7 +229,7 @@ pub fn main() !void {
     }
 
     std.debug.print("[Jarvis] Ready. Speak into microphone or type in console.\n", .{});
-    std.debug.print("[Jarvis] (Type 'exit'/'quit' to stop, minimize via Tray icon)\n\n", .{});
+    std.debug.print("[Jarvis] (Type 'help' for full command list, 'exit'/'quit' to stop)\n\n", .{});
 
     // 7. Interactive REPL loop
     var line_buf: [4096]u8 = undefined;
@@ -218,6 +257,12 @@ pub fn main() !void {
             tts_engine.speakAsync("Выключение. До свидания!");
             tray_mod.should_exit.store(true, .release);
             break;
+        }
+
+        if (std.mem.eql(u8, trimmed, "help") or std.mem.eql(u8, trimmed, "/help") or std.mem.eql(u8, trimmed, "?") or std.mem.eql(u8, trimmed, "команды")) {
+            printHelp();
+            tts_engine.speakAsync("Вот полный список доступных команд и возможностей.");
+            continue;
         }
 
         global_app.busy_lock.lock();
