@@ -54,6 +54,18 @@ fn onMicCapture(chunk: []const u8, user_data: ?*anyopaque) void {
     // Real-time audio stream ready for VAD / STT engine (Silero / Whisper)
 }
 
+fn sleepMs(ms: u32) void {
+    if (builtin.os.tag == .windows) {
+        win_c.Sleep(ms);
+    } else {
+        const req = std.posix.timespec{
+            .sec = @intCast(ms / 1000),
+            .nsec = @intCast((ms % 1000) * 1_000_000),
+        };
+        _ = std.posix.nanosleep(&req, null);
+    }
+}
+
 fn readStdinLine(buf: []u8) ?[]const u8 {
     if (builtin.os.tag == .windows) {
         const h_stdin = win_c.GetStdHandle(win_c.STD_INPUT_HANDLE);
@@ -138,7 +150,11 @@ pub fn main() !void {
     while (!tray_mod.should_exit.load(.acquire)) {
         std.debug.print("[User]: ", .{});
         const line = readStdinLine(&line_buf);
-        if (line == null) break; // EOF
+        if (line == null) {
+            // Keep assistant alive in background/tray mode even if stdin stream is inactive
+            sleepMs(250);
+            continue;
+        }
 
         if (tray_mod.should_exit.load(.acquire)) break;
 
@@ -147,6 +163,7 @@ pub fn main() !void {
 
         if (std.mem.eql(u8, trimmed, "exit") or std.mem.eql(u8, trimmed, "quit")) {
             std.debug.print("\n[Jarvis] Выключение. До свидания!\n", .{});
+            tray_mod.should_exit.store(true, .release);
             break;
         }
 

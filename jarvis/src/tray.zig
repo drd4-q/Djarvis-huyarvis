@@ -122,7 +122,8 @@ pub fn runTrayLoop() void {
     wc.hInstance = hInstance;
     wc.lpszClassName = className;
 
-    _ = win_c.RegisterClassExW(&wc);
+    const class_atom = win_c.RegisterClassExW(&wc);
+    std.debug.print("[Tray] RegisterClassExW atom: {d}\n", .{class_atom});
 
     const hwnd = win_c.CreateWindowExW(
         0,
@@ -139,30 +140,37 @@ pub fn runTrayLoop() void {
         null,
     );
 
-    if (hwnd == null) return;
+    if (hwnd == null) {
+        std.debug.print("[Tray Error] CreateWindowExW failed (err: {d})\n", .{win_c.GetLastError()});
+        return;
+    }
     g_hwnd = hwnd;
+    std.debug.print("[Tray] Window created: {*} \n", .{hwnd});
 
     // Initialize Notification Icon
     g_nid = std.mem.zeroes(win_c.NOTIFYICONDATAW);
     g_nid.cbSize = @sizeOf(win_c.NOTIFYICONDATAW);
     g_nid.hWnd = hwnd;
     g_nid.uID = 1;
-    g_nid.uFlags = win_c.NIF_MESSAGE | win_c.NIF_ICON | win_c.NIF_TIP | win_c.NIF_INFO;
+    g_nid.uFlags = win_c.NIF_MESSAGE | win_c.NIF_ICON | win_c.NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
-    g_nid.hIcon = win_c.LoadIconW(null, @as([*c]const u16, @ptrFromInt(32512))); // IDI_APPLICATION
+
+    var hIcon = win_c.LoadIconW(null, @as([*c]const u16, @ptrFromInt(32512))); // IDI_APPLICATION
+    if (hIcon == null) {
+        hIcon = win_c.LoadIconW(null, @as([*c]const u16, @ptrFromInt(32516))); // IDI_INFORMATION
+    }
+    g_nid.hIcon = hIcon;
 
     const tip_text = std.unicode.utf8ToUtf16LeStringLiteral("Jarvis AI Assistant");
     @memcpy(g_nid.szTip[0..tip_text.len], tip_text);
 
-    const info_title = std.unicode.utf8ToUtf16LeStringLiteral("Jarvis AI");
-    @memcpy(g_nid.szInfoTitle[0..info_title.len], info_title);
-
-    const info_text = std.unicode.utf8ToUtf16LeStringLiteral("Jarvis запущен и работает в системном трее.");
-    @memcpy(g_nid.szInfo[0..info_text.len], info_text);
-    g_nid.dwInfoFlags = win_c.NIIF_INFO;
-
-    if (win_c.Shell_NotifyIconW(win_c.NIM_ADD, &g_nid) != 0) {
+    const res = win_c.Shell_NotifyIconW(win_c.NIM_ADD, &g_nid);
+    std.debug.print("[Tray] Shell_NotifyIconW NIM_ADD result: {d}\n", .{res});
+    if (res != 0) {
         g_tray_inited = true;
+        std.debug.print("[Tray] Tray icon successfully added to notification area!\n", .{});
+    } else {
+        std.debug.print("[Tray Warning] Shell_NotifyIconW failed (err: {d})\n", .{win_c.GetLastError()});
     }
 
     var msg: win_c.MSG = std.mem.zeroes(win_c.MSG);
@@ -172,6 +180,7 @@ pub fn runTrayLoop() void {
     }
 
     removeTrayIcon();
+    std.debug.print("[Tray] Tray message loop ended\n", .{});
 }
 
 pub fn startTrayThread() !std.Thread {
