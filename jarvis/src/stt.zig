@@ -22,7 +22,7 @@ pub const SttEngine = struct {
     preroll_count: usize = 0,
     is_speaking: bool = false,
     silence_frames: usize = 0,
-    energy_threshold: i32 = 450, // RMS energy threshold for speech (eliminates background noise)
+    noise_floor: i32 = 300, // Dynamic adaptive background noise floor
     min_speech_frames: usize = 16000 * 5 / 10, // ~500ms minimum speech
     max_silence_frames: usize = 16000 * 7 / 10, // ~700ms silence to conclude utterance
 
@@ -82,7 +82,15 @@ pub const SttEngine = struct {
         self.acquireLock();
         defer self.releaseLock();
 
-        if (rms > self.energy_threshold) {
+        // 2. Adaptively update background noise floor
+        if (!self.is_speaking or rms < self.noise_floor * 2) {
+            self.noise_floor = @divTrunc(self.noise_floor * 31 + rms, 32);
+        }
+
+        // Dynamic threshold: at least 950 RMS and 2.5x above ambient noise floor
+        const dynamic_threshold = @max(950, self.noise_floor * 3 + 400);
+
+        if (rms > dynamic_threshold) {
             // Speech detected
             if (!self.is_speaking) {
                 self.is_speaking = true;
@@ -121,17 +129,34 @@ pub const SttEngine = struct {
                     const Worker = struct {
                         fn run(alloc: std.mem.Allocator, w_exe: []const u8, m_path: []const u8, s_data: []const i16, cb: ?*const fn (text: []const u8, udata: ?*anyopaque) void, udata: ?*anyopaque) void {
                             defer alloc.free(s_data);
+
+                            // Pre-filter: verify that the audio actually contains human voice energy
+                            var max_peak: i32 = 0;
+                            var s_sum_sq: u64 = 0;
+                            for (s_data) |s| {
+                                const abs_s: i32 = if (s < 0) -@as(i32, s) else @as(i32, s);
+                                if (abs_s > max_peak) max_peak = abs_s;
+                                const val: i64 = s;
+                                s_sum_sq += @intCast(val * val);
+                            }
+                            const mean_rms: i32 = @intCast(std.math.sqrt(s_sum_sq / @as(u64, @max(1, s_data.len))));
+
+                            // Discard silence or quiet noise floor without calling Whisper
+                            if (max_peak < 1800 or mean_rms < 500) {
+                                return;
+                            }
+
                             const seq = g_wav_seq.fetchAdd(1, .monotonic) % 8;
                             var wav_name_buf: [64]u8 = undefined;
                             const wav_file = std.fmt.bufPrint(&wav_name_buf, "cache_mic_{d}.wav", .{seq}) catch "cache_mic.wav";
 
-                            // Write normalized WAV file
+                            // Write WAV file
                             writeWavFile(wav_file, s_data);
 
-                            // Transcribe with whisper-cli using optimal beam search and concise vocabulary keywords
+                            // Transcribe with whisper-cli with high speech threshold and no hallucination prompt
                             var cmd_buf: [1024]u8 = undefined;
                             const cmd_str = std.fmt.bufPrint(&cmd_buf,
-                                "{s} -m {s} -l ru -nt -np -nf -sns --best-of 5 --beam-size 5 -tp 0.0 --prompt \"Джарвис, YouTube, Discord, Telegram, Steam, Chrome, Windows.\" -f {s}",
+                                "{s} -m {s} -l ru -nt -np -nf -sns -nth 0.60 --best-of 5 --beam-size 5 -tp 0.0 -f {s}",
                                 .{ w_exe, m_path, wav_file }
                             ) catch return;
 
@@ -221,30 +246,7 @@ pub const SttEngine = struct {
         std.mem.writeInt(u32, header[40..44], data_len, .little);
 
         _ = fwrite(&header, 1, 44, f);
-
-        // Normalize peak audio volume to ~24000 for crystal-clear Whisper decoding
-        var max_val: i32 = 1;
-        for (samples) |s| {
-            const abs_s: i32 = if (s < 0) -@as(i32, s) else @as(i32, s);
-            if (abs_s > max_val) max_val = abs_s;
-        }
-
-        const gain: f32 = if (max_val > 400 and max_val < 18000)
-            @min(4.0, 24000.0 / @as(f32, @floatFromInt(max_val)))
-        else
-            1.0;
-
-        if (gain > 1.05) {
-            for (samples) |s| {
-                const scaled: f32 = @as(f32, @floatFromInt(s)) * gain;
-                const clamped: i16 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled)), -32768, 32767));
-                var s_bytes: [2]u8 = undefined;
-                std.mem.writeInt(i16, &s_bytes, clamped, .little);
-                _ = fwrite(&s_bytes, 1, 2, f);
-            }
-        } else {
-            _ = fwrite(@as([*]const u8, @ptrCast(samples.ptr)), 1, data_len, f);
-        }
+        _ = fwrite(@as([*]const u8, @ptrCast(samples.ptr)), 1, data_len, f);
     }
 
     fn cleanWhisperOutput(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
@@ -264,7 +266,7 @@ pub const SttEngine = struct {
         if (std.mem.startsWith(u8, trimmed, "[") and std.mem.endsWith(u8, trimmed, "]")) return try allocator.dupe(u8, "");
         if (std.mem.startsWith(u8, trimmed, "(") and std.mem.endsWith(u8, trimmed, ")")) return try allocator.dupe(u8, "");
 
-        // Filter common Whisper silence hallucinations
+        // Filter common Whisper silence & YouTube training dataset hallucinations
         const hallucinations = [_][]const u8{
             "субтитр", "Субтитр", "редактор", "Редактор", "перевод", "Перевод",
             "продолжение следует", "Продолжение следует", "спасибо за просмотр",
@@ -273,6 +275,9 @@ pub const SttEngine = struct {
             "Спокойной ночи", "музыка", "Музыка", "аплодисменты", "Аплодисменты",
             "тишина", "Тишина", "текст предоставил", "Текст предоставил",
             "ютуб канал", "Ютуб канал", "Джарвис — умный", "умный голосовой",
+            "Увидимся в следующем", "увидимся в следующем", "Доброго дня", "доброго дня",
+            "Всем пока", "всем пока", "Позвольте подписаться", "позвольте подписаться",
+            "Ну что", "ну что", "Пока пока", "пока пока", "До скорых", "до скорых",
         };
 
         for (hallucinations) |h| {
