@@ -91,15 +91,23 @@ pub const TOOLS_SCHEMA_JSON =
     \\    "type": "function",
     \\    "function": {
     \\      "name": "open_app",
-    \\      "description": "Open any Windows app or program (e.g. 'notepad', 'calc', 'explorer', 'taskmgr', 'msedge', 'cmd', 'mspaint', 'settings').",
+    \\      "description": "Open any installed application or program by name from the app database (e.g. 'discord', 'telegram', 'chrome', 'steam', 'obs', 'vscode', 'яндекс музыка', 'notepad', 'calc', 'taskmgr', 'paint', 'settings').",
     \\      "parameters": {
     \\        "type": "object",
     \\        "properties": {
-    \\          "path": { "type": "string", "description": "App name or path" },
+    \\          "path": { "type": "string", "description": "App name or keyword (e.g. 'discord', 'telegram', 'steam', 'chrome')" },
     \\          "args": { "type": "string", "description": "Optional arguments" }
     \\        },
     \\        "required": ["path"]
     \\      }
+    \\    }
+    \\  },
+    \\  {
+    \\    "type": "function",
+    \\    "function": {
+    \\      "name": "rescan_apps",
+    \\      "description": "Scan and refresh the local database of all installed programs on the computer.",
+    \\      "parameters": { "type": "object", "properties": {} }
     \\    }
     \\  },
     \\  {

@@ -481,6 +481,172 @@ pub fn openApp(allocator: std.mem.Allocator, path: []const u8, args: ?[]const u8
     }
 }
 
+pub fn rescanApps(allocator: std.mem.Allocator) ![]const u8 {
+    _ = executeCommand(allocator, "powershell -ExecutionPolicy Bypass -File .\\scripts\\index_apps.ps1") catch "";
+    return "База данных установленных программ успешно обновлена.";
+}
+
+pub fn openAppByName(allocator: std.mem.Allocator, app_name: []const u8) ![]const u8 {
+    const trimmed = std.mem.trim(u8, app_name, " \r\n\t'\"");
+    if (trimmed.len == 0) return "Не указано имя программы.";
+
+    // 1. Built-in Windows tools
+    if (std.mem.eql(u8, trimmed, "калькулятор") or std.ascii.eqlIgnoreCase(trimmed, "calc") or std.ascii.eqlIgnoreCase(trimmed, "calculator")) {
+        try openApp(allocator, "calc.exe", null);
+        return "Открываю Калькулятор.";
+    } else if (std.mem.eql(u8, trimmed, "блокнот") or std.ascii.eqlIgnoreCase(trimmed, "notepad")) {
+        try openApp(allocator, "notepad.exe", null);
+        return "Открываю Блокнот.";
+    } else if (std.mem.eql(u8, trimmed, "диспетчер задач") or std.ascii.eqlIgnoreCase(trimmed, "taskmgr") or std.ascii.eqlIgnoreCase(trimmed, "task manager")) {
+        try openApp(allocator, "taskmgr.exe", null);
+        return "Открываю Диспетчер задач.";
+    } else if (std.mem.eql(u8, trimmed, "командная строка") or std.ascii.eqlIgnoreCase(trimmed, "cmd")) {
+        try openApp(allocator, "cmd.exe", null);
+        return "Открываю Командную строку.";
+    } else if (std.mem.eql(u8, trimmed, "проводник") or std.ascii.eqlIgnoreCase(trimmed, "explorer")) {
+        try openApp(allocator, "explorer.exe", null);
+        return "Открываю Проводник.";
+    } else if (std.mem.eql(u8, trimmed, "паинт") or std.mem.eql(u8, trimmed, "пейнт") or std.ascii.eqlIgnoreCase(trimmed, "paint") or std.ascii.eqlIgnoreCase(trimmed, "mspaint")) {
+        try openApp(allocator, "mspaint.exe", null);
+        return "Открываю Paint.";
+    } else if (std.mem.eql(u8, trimmed, "настройки") or std.mem.eql(u8, trimmed, "параметры") or std.ascii.eqlIgnoreCase(trimmed, "settings")) {
+        try openApp(allocator, "ms-settings:", null);
+        return "Открываю Параметры Windows.";
+    }
+
+    // Map common Russian spoken aliases to query keywords
+    var query: []const u8 = trimmed;
+    if (std.mem.eql(u8, trimmed, "дискорд")) {
+        query = "discord";
+    } else if (std.mem.eql(u8, trimmed, "телеграм") or std.mem.eql(u8, trimmed, "телега")) {
+        query = "telegram";
+    } else if (std.mem.eql(u8, trimmed, "хром") or std.mem.eql(u8, trimmed, "гугл хром") or std.mem.eql(u8, trimmed, "браузер")) {
+        query = "chrome";
+    } else if (std.mem.eql(u8, trimmed, "стим")) {
+        query = "steam";
+    } else if (std.mem.eql(u8, trimmed, "обс") or std.mem.eql(u8, trimmed, "обска")) {
+        query = "obs";
+    } else if (std.mem.eql(u8, trimmed, "код") or std.mem.eql(u8, trimmed, "вскод") or std.mem.eql(u8, trimmed, "вс код")) {
+        query = "visual studio code";
+    } else if (std.mem.eql(u8, trimmed, "музыка")) {
+        query = "яндекс музыка";
+    } else if (std.mem.eql(u8, trimmed, "аида")) {
+        query = "aida64";
+    } else if (std.mem.eql(u8, trimmed, "автобернер") or std.mem.eql(u8, trimmed, "афтербернер")) {
+        query = "msi afterburner";
+    } else if (std.mem.eql(u8, trimmed, "риватюнер") or std.mem.eql(u8, trimmed, "рива")) {
+        query = "rivatuner";
+    } else if (std.mem.eql(u8, trimmed, "торрент") or std.mem.eql(u8, trimmed, "кьюбит")) {
+        query = "qbittorrent";
+    } else if (std.mem.eql(u8, trimmed, "визтри")) {
+        query = "wiztree";
+    } else if (std.mem.eql(u8, trimmed, "рипер")) {
+        query = "reaper";
+    } else if (std.mem.eql(u8, trimmed, "принтер") or std.mem.eql(u8, trimmed, "крилити")) {
+        query = "creality";
+    } else if (std.mem.eql(u8, trimmed, "эврисинг")) {
+        query = "everything";
+    } else if (std.mem.eql(u8, trimmed, "радмин")) {
+        query = "radmin";
+    }
+
+    // 2. Search in indexed applications database (cache_apps.json)
+    const json_path = "cache_apps.json";
+    var fp = fopen(json_path, "rb");
+    if (fp == null) {
+        _ = rescanApps(allocator) catch "";
+        fp = fopen(json_path, "rb");
+    }
+
+    var best_match_path: ?[]const u8 = null;
+    var best_match_title: ?[]const u8 = null;
+    var best_score: usize = 0;
+
+    if (fp) |f| {
+        defer _ = fclose(f);
+        _ = fseek(f, 0, 2);
+        const fsize_c = ftell(f);
+        _ = fseek(f, 0, 0);
+
+        if (fsize_c > 0 and fsize_c < 10 * 1024 * 1024) {
+            const fsize: usize = @intCast(fsize_c);
+            const buf = try allocator.alloc(u8, fsize);
+            defer allocator.free(buf);
+            const n_read = fread(buf.ptr, 1, fsize, f);
+            if (n_read > 0) {
+                if (std.json.parseFromSlice(std.json.Value, allocator, buf[0..n_read], .{})) |parsed| {
+                    defer parsed.deinit();
+                    if (parsed.value == .array) {
+                        for (parsed.value.array.items) |item| {
+                            if (item == .object) {
+                                const name_val = item.object.get("name");
+                                const path_val = item.object.get("path");
+                                const title_val = item.object.get("title");
+
+                                if (name_val != null and path_val != null and name_val.? == .string and path_val.? == .string) {
+                                    const app_key = name_val.?.string;
+                                    const app_target = path_val.?.string;
+                                    const display_title = if (title_val != null and title_val.? == .string) title_val.?.string else query;
+
+                                    // Score calculation:
+                                    // 100: Exact match
+                                    // 80: Substring start
+                                    // 50: Substring anywhere
+                                    var score: usize = 0;
+                                    if (std.ascii.eqlIgnoreCase(app_key, query) or std.ascii.eqlIgnoreCase(display_title, query)) {
+                                        score = 100;
+                                    } else if (std.mem.startsWith(u8, app_key, query)) {
+                                        score = 80;
+                                    } else if (std.mem.indexOf(u8, app_key, query) != null) {
+                                        score = 50;
+                                    } else if (std.mem.indexOf(u8, query, app_key) != null) {
+                                        score = 40;
+                                    }
+
+                                    // Filter out uninstaller shortcuts
+                                    if (std.mem.indexOf(u8, app_key, "uninstall") != null or std.mem.indexOf(u8, app_key, "деинсталл") != null) {
+                                        score = 0;
+                                    }
+
+                                    if (score > best_score) {
+                                        best_score = score;
+                                        best_match_path = try allocator.dupe(u8, app_target);
+                                        best_match_title = try allocator.dupe(u8, display_title);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else |_| {}
+            }
+        }
+    }
+
+    if (best_match_path) |bmp| {
+        defer allocator.free(bmp);
+        openApp(allocator, bmp, null) catch {};
+        const title_to_show = if (best_match_title) |bmt| bmt else query;
+        return try std.fmt.allocPrint(allocator, "Открываю {s}.", .{title_to_show});
+    }
+
+    // 3. Fallback: Deep filesystem executable discovery
+    const deep_cmd = try std.fmt.allocPrint(allocator, "powershell -NoProfile -Command \"$f = Get-ChildItem -Path @('C:\\Program Files', 'C:\\Program Files (x86)', \\\"$env:LOCALAPPDATA\\Programs\\\") -Filter '*{s}*.exe' -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1; if ($f) {{{{ $f.FullName }}}}\"", .{query});
+    defer allocator.free(deep_cmd);
+
+    const found_exe_raw = executeCommand(allocator, deep_cmd) catch "";
+    const found_exe = std.mem.trim(u8, found_exe_raw, " \r\n\t");
+    if (found_exe.len > 3 and std.mem.endsWith(u8, found_exe, ".exe")) {
+        openApp(allocator, found_exe, null) catch {};
+        return try std.fmt.allocPrint(allocator, "Найдено и запущено: {s}.", .{query});
+    }
+
+    // 4. Fallback to direct Windows launch
+    openApp(allocator, trimmed, null) catch {
+        return try std.fmt.allocPrint(allocator, "Не удалось найти программу '{s}' на компьютере.", .{trimmed});
+    };
+    return try std.fmt.allocPrint(allocator, "Открываю {s}.", .{trimmed});
+}
+
 pub extern fn capture_screen_bmp(filepath: [*:0]const u8) c_int;
 extern fn fopen(filename: [*:0]const u8, modes: [*:0]const u8) ?*anyopaque;
 extern fn fclose(stream: ?*anyopaque) c_int;

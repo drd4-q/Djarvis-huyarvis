@@ -15,9 +15,12 @@ pub const SttEngine = struct {
 
     // VAD & Buffering state
     speech_samples: std.ArrayList(i16) = .empty,
+    preroll_buf: [4800]i16 = std.mem.zeroes([4800]i16), // 300ms pre-roll to preserve first syllable
+    preroll_pos: usize = 0,
+    preroll_count: usize = 0,
     is_speaking: bool = false,
     silence_frames: usize = 0,
-    energy_threshold: i32 = 450, // RMS energy threshold for speech
+    energy_threshold: i32 = 300, // RMS energy threshold for speech (sensitive and crisp)
     min_speech_frames: usize = 16000 * 4 / 10, // ~400ms minimum speech
     max_silence_frames: usize = 16000 * 7 / 10, // ~700ms silence to conclude utterance
 
@@ -82,6 +85,16 @@ pub const SttEngine = struct {
             if (!self.is_speaking) {
                 self.is_speaking = true;
                 self.silence_frames = 0;
+
+                // Prepend 300ms pre-roll buffer so the beginning of the word is never chopped
+                if (self.preroll_count > 0) {
+                    var read_idx: usize = if (self.preroll_count < 4800) 0 else self.preroll_pos;
+                    var copied: usize = 0;
+                    while (copied < self.preroll_count) : (copied += 1) {
+                        self.speech_samples.append(self.allocator, self.preroll_buf[read_idx]) catch break;
+                        read_idx = (read_idx + 1) % 4800;
+                    }
+                }
             }
             self.speech_samples.appendSlice(self.allocator, samples) catch return;
             self.silence_frames = 0;
@@ -95,6 +108,8 @@ pub const SttEngine = struct {
                 const total_samples = self.speech_samples.items.len;
                 self.is_speaking = false;
                 self.silence_frames = 0;
+                self.preroll_count = 0;
+                self.preroll_pos = 0;
 
                 if (total_samples >= self.min_speech_frames) {
                     const samples_copy = self.allocator.dupe(i16, self.speech_samples.items) catch return;
@@ -106,7 +121,7 @@ pub const SttEngine = struct {
                             defer alloc.free(s_data);
                             const wav_file = "cache_mic.wav";
 
-                            // Write WAV file
+                            // Write normalized WAV file
                             writeWavFile(wav_file, s_data);
 
                             // Transcribe with whisper-cli using optimal beam search and Russian assistant prompt
@@ -145,21 +160,25 @@ pub const SttEngine = struct {
                         }
                     };
 
-                    const t = std.Thread.spawn(.{}, Worker.run, .{
+                    const thread = std.Thread.spawn(.{}, Worker.run, .{
                         self.allocator,
                         self.whisper_exe,
                         self.model_path,
                         samples_copy,
                         self.on_speech_recognized,
                         self.user_data,
-                    }) catch {
-                        self.allocator.free(samples_copy);
-                        return;
-                    };
-                    t.detach();
+                    }) catch return;
+                    thread.detach();
                 } else {
                     self.speech_samples.clearRetainingCapacity();
                 }
+            }
+        } else {
+            // Silence before speech: store into circular pre-roll buffer
+            for (samples) |s| {
+                self.preroll_buf[self.preroll_pos] = s;
+                self.preroll_pos = (self.preroll_pos + 1) % 4800;
+                if (self.preroll_count < 4800) self.preroll_count += 1;
             }
         }
     }
@@ -198,7 +217,30 @@ pub const SttEngine = struct {
         std.mem.writeInt(u32, header[40..44], data_len, .little);
 
         _ = fwrite(&header, 1, 44, f);
-        _ = fwrite(@as([*]const u8, @ptrCast(samples.ptr)), 1, data_len, f);
+
+        // Normalize peak audio volume to ~24000 for crystal-clear Whisper decoding
+        var max_val: i32 = 1;
+        for (samples) |s| {
+            const abs_s: i32 = if (s < 0) -@as(i32, s) else @as(i32, s);
+            if (abs_s > max_val) max_val = abs_s;
+        }
+
+        const gain: f32 = if (max_val > 400 and max_val < 18000)
+            @min(4.0, 24000.0 / @as(f32, @floatFromInt(max_val)))
+        else
+            1.0;
+
+        if (gain > 1.05) {
+            for (samples) |s| {
+                const scaled: f32 = @as(f32, @floatFromInt(s)) * gain;
+                const clamped: i16 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled)), -32768, 32767));
+                var s_bytes: [2]u8 = undefined;
+                std.mem.writeInt(i16, &s_bytes, clamped, .little);
+                _ = fwrite(&s_bytes, 1, 2, f);
+            }
+        } else {
+            _ = fwrite(@as([*]const u8, @ptrCast(samples.ptr)), 1, data_len, f);
+        }
     }
 
     fn cleanWhisperOutput(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {

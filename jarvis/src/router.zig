@@ -95,9 +95,15 @@ pub const Router = struct {
                     }
                 }
             }
-            win32.openApp(arena_alloc, path, args) catch {
-                exec_err = "failed to launch app";
-            };
+            if (args != null and args.?.len > 0) {
+                win32.openApp(arena_alloc, path, args) catch {
+                    exec_err = "failed to launch app";
+                };
+            } else {
+                return win32.openAppByName(arena_alloc, path) catch "не удалось запустить программу";
+            }
+        } else if (std.mem.eql(u8, name, "rescan_apps")) {
+            return win32.rescanApps(arena_alloc) catch "не удалось обновить базу программ";
         } else if (std.mem.eql(u8, name, "open_url")) {
             var url: []const u8 = "";
             if (parsed_args_opt) |p| {

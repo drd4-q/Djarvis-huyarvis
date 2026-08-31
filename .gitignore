@@ -2,7 +2,10 @@
 zig-out/
 bin/
 models/
+cache_*.*
 *.exe
 *.o
 *.obj
-
+*.pdb
+*.ilk
+*.lnk

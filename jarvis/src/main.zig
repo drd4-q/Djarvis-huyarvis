@@ -7,9 +7,12 @@ const config_mod = @import("config.zig");
 const tray_mod = @import("tray.zig");
 const tts_mod = @import("tts.zig");
 const stt_mod = @import("stt.zig");
+const win32 = @import("win32.zig");
 
 // Direct libc bindings for minimal overhead
 extern fn getenv(name: [*:0]const u8) ?[*:0]const u8;
+extern fn fopen(filename: [*:0]const u8, modes: [*:0]const u8) ?*anyopaque;
+extern fn fclose(stream: ?*anyopaque) c_int;
 
 const win_c = if (builtin.os.tag == .windows) @cImport({
     @cInclude("windows.h");
@@ -231,6 +234,16 @@ pub fn main() !void {
     // Check if launched with --tray or --hide to start minimized in tray
     if (checkStartMinimized()) {
         tray_mod.showConsole(false);
+    }
+
+    // Auto-index installed apps database if missing
+    if (builtin.os.tag == .windows) {
+        const fp_apps = fopen("cache_apps.json", "rb");
+        if (fp_apps) |f| {
+            _ = fclose(f);
+        } else {
+            _ = win32.rescanApps(allocator) catch {};
+        }
     }
 
     std.debug.print("[Jarvis] Ready. Speak into microphone or type in console.\n", .{});

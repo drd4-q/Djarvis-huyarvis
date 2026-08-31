@@ -17,6 +17,19 @@ pub const TtsEngine = struct {
     piper_exe: []const u8 = "bin\\piper\\piper.exe",
     model_path: []const u8 = "models\\ru_RU-dmitri-medium.onnx",
 
+    fn checkFileExists(path: []const u8) bool {
+        var p_z: [256:0]u8 = undefined;
+        if (path.len >= 256) return false;
+        @memcpy(p_z[0..path.len], path);
+        p_z[path.len] = 0;
+        const fp = fopen(&p_z, "rb");
+        if (fp) |f| {
+            _ = fclose(f);
+            return true;
+        }
+        return false;
+    }
+
     pub fn init(allocator: std.mem.Allocator) TtsEngine {
         return .{
             .allocator = allocator,
@@ -76,10 +89,10 @@ pub const TtsEngine = struct {
                             _ = fclose(f_txt);
                         }
 
-                        // 2. Synthesize via Piper with natural pace and clear sentence pauses
+                        // 2. Synthesize via Piper with clear, natural pace
                         var cmd_buf: [1024]u8 = undefined;
                         const cmd = std.fmt.bufPrint(&cmd_buf,
-                            "cmd /c \"type {s} | {s} -m {s} --length-scale 1.05 --sentence-silence 0.25 -f {s}\"",
+                            "cmd /c \"type {s} | {s} -m {s} --length-scale 1.02 --sentence-silence 0.2 -f {s}\"",
                             .{ txt_file, piper_path, m_path, wav_file }
                         ) catch return;
 
