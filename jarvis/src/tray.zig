@@ -50,7 +50,7 @@ fn removeTrayIcon() void {
     }
 }
 
-fn wndProc(hwnd: ?win_c.HWND, msg: win_c.UINT, wparam: win_c.WPARAM, lparam: win_c.LPARAM) callconv(.c) win_c.LRESULT {
+fn wndProc(hwnd: win_c.HWND, msg: win_c.UINT, wparam: win_c.WPARAM, lparam: win_c.LPARAM) callconv(.c) win_c.LRESULT {
     if (builtin.os.tag != .windows) return 0;
 
     switch (msg) {

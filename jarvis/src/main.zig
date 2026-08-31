@@ -8,8 +8,6 @@ const tray_mod = @import("tray.zig");
 
 // Direct libc bindings for minimal overhead
 extern fn getenv(name: [*:0]const u8) ?[*:0]const u8;
-extern fn fgets(buf: [*c]u8, size: c_int, stream: ?*anyopaque) ?[*c]u8;
-extern var stdin: ?*anyopaque;
 
 const win_c = if (builtin.os.tag == .windows) @cImport({
     @cInclude("windows.h");
@@ -26,7 +24,7 @@ fn checkStartMinimized() bool {
             var num_args: c_int = 0;
             const argv = win_c.CommandLineToArgvW(cmd_line, &num_args);
             if (argv != null) {
-                defer _ = win_c.LocalFree(argv);
+                defer _ = win_c.LocalFree(@as(?*anyopaque, @ptrCast(argv)));
                 var i: usize = 0;
                 while (i < @as(usize, @intCast(num_args))) : (i += 1) {
                     const arg_slice = std.mem.span(argv[i]);
@@ -58,10 +56,12 @@ fn onMicCapture(chunk: []const u8, user_data: ?*anyopaque) void {
 
 fn readStdinLine(buf: []u8) ?[]const u8 {
     if (builtin.os.tag == .windows) {
-        if (fgets(buf.ptr, @intCast(buf.len), stdin)) |res| {
-            return std.mem.span(res);
-        }
-        return null;
+        const h_stdin = win_c.GetStdHandle(win_c.STD_INPUT_HANDLE);
+        if (h_stdin == win_c.INVALID_HANDLE_VALUE or h_stdin == null) return null;
+        var bytes_read: win_c.DWORD = 0;
+        const ok = win_c.ReadFile(h_stdin, buf.ptr, @as(win_c.DWORD, @intCast(buf.len)), &bytes_read, null);
+        if (ok == 0 or bytes_read == 0) return null;
+        return buf[0..bytes_read];
     } else {
         const n = std.posix.read(0, buf) catch return null;
         if (n == 0) return null;

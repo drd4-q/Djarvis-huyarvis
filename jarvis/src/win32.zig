@@ -68,20 +68,20 @@ pub fn setVolume(scalar: f32, mute: ?bool) !void {
     if (win_c.CoCreateInstance(clsid, null, win_c.CLSCTX_INPROC_SERVER, iid_enum, @as(*?*anyopaque, @ptrCast(&pEnumerator))) != win_c.S_OK) {
         return Win32Error.DeviceEnumeratorFailed;
     }
-    defer _ = pEnumerator.?.lpVtbl.*.Release.?(@as(*win_c.IUnknown, @ptrCast(pEnumerator.?)));
+    defer _ = pEnumerator.?.lpVtbl.*.Release.?(pEnumerator.?);
 
     var pDevice: ?*win_c.IMMDevice = null;
     if (pEnumerator.?.lpVtbl.*.GetDefaultAudioEndpoint.?(pEnumerator.?, win_c.eRender, win_c.eMultimedia, &pDevice) != win_c.S_OK) {
         return Win32Error.DefaultDeviceFailed;
     }
-    defer _ = pDevice.?.lpVtbl.*.Release.?(@as(*win_c.IUnknown, @ptrCast(pDevice.?)));
+    defer _ = pDevice.?.lpVtbl.*.Release.?(pDevice.?);
 
     var pVolume: ?*win_c.IAudioEndpointVolume = null;
     const iid_vol = @as(*const win_c.GUID, @ptrCast(&IID_IAudioEndpointVolume_GUID));
     if (pDevice.?.lpVtbl.*.Activate.?(pDevice.?, iid_vol, win_c.CLSCTX_INPROC_SERVER, null, @as(*?*anyopaque, @ptrCast(&pVolume))) != win_c.S_OK) {
         return Win32Error.ActivateVolumeFailed;
     }
-    defer _ = pVolume.?.lpVtbl.*.Release.?(@as(*win_c.IUnknown, @ptrCast(pVolume.?)));
+    defer _ = pVolume.?.lpVtbl.*.Release.?(pVolume.?);
 
     const clamped = std.math.clamp(scalar, 0.0, 1.0);
     if (pVolume.?.lpVtbl.*.SetMasterVolumeLevelScalar.?(pVolume.?, clamped, null) != win_c.S_OK) {
@@ -154,7 +154,7 @@ pub fn focusWindow(allocator: std.mem.Allocator, title_contains: []const u8) !vo
     ctx.needle_len = utf16_len;
 
     const callback = struct {
-        fn enumProc(hwnd: ?win_c.HWND, lparam: win_c.LPARAM) callconv(.c) win_c.BOOL {
+        fn enumProc(hwnd: win_c.HWND, lparam: win_c.LPARAM) callconv(.c) win_c.BOOL {
             const search_ctx: *WindowSearchContext = @ptrFromInt(@as(usize, @bitCast(lparam)));
             var title_buf: [512]u16 = undefined;
             const len = win_c.GetWindowTextW(hwnd, @as([*c]u16, @ptrCast(&title_buf)), 512);
@@ -174,7 +174,7 @@ pub fn focusWindow(allocator: std.mem.Allocator, title_contains: []const u8) !vo
     _ = win_c.EnumWindows(callback, @as(win_c.LPARAM, @bitCast(@intFromPtr(&ctx))));
 
     if (ctx.found_hwnd) |hwnd_ptr| {
-        const hwnd: win_c.HWND = @ptrCast(hwnd_ptr);
+        const hwnd: win_c.HWND = @ptrCast(@alignCast(hwnd_ptr));
         _ = win_c.ShowWindow(hwnd, win_c.SW_RESTORE);
         _ = win_c.SetForegroundWindow(hwnd);
     } else {

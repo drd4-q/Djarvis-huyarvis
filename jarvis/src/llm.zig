@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const SystemPrompt =
     \\Ты — Джарвис, высокоэффективный голосовой ИИ-ассистент для Windows.
@@ -7,14 +8,36 @@ pub const SystemPrompt =
     \\Отвечай на русском языке кратко (1-2 предложения), без лишней воды.
 ;
 
+const win_wsa = if (builtin.os.tag == .windows) struct {
+    const WSADATA = extern struct {
+        wVersion: u16,
+        wHighVersion: u16,
+        szDescription: [257]u8,
+        szSystemStatus: [129]u8,
+        iMaxSockets: u16,
+        iMaxUdpDg: u16,
+        lpVendorInfo: ?*anyopaque,
+    };
+    extern fn WSAStartup(wVersionRequired: u16, lpWSAData: *WSADATA) callconv(.c) c_int;
+    extern fn closesocket(s: c_int) callconv(.c) c_int;
+} else struct {};
+
 const c_net = struct {
-    extern fn socket(domain: c_int, typ: c_int, protocol: c_int) c_int;
-    extern fn connect(sockfd: c_int, addr: ?*const anyopaque, addrlen: u32) c_int;
-    extern fn send(sockfd: c_int, buf: [*]const u8, len: usize, flags: c_int) isize;
-    extern fn recv(sockfd: c_int, buf: [*]u8, len: usize, flags: c_int) isize;
-    extern fn close(fd: c_int) c_int;
-    extern fn inet_addr(cp: [*:0]const u8) u32;
-    extern fn htons(hostshort: u16) u16;
+    extern fn socket(domain: c_int, typ: c_int, protocol: c_int) callconv(.c) c_int;
+    extern fn connect(sockfd: c_int, addr: ?*const anyopaque, addrlen: u32) callconv(.c) c_int;
+    extern fn send(sockfd: c_int, buf: [*]const u8, len: usize, flags: c_int) callconv(.c) isize;
+    extern fn recv(sockfd: c_int, buf: [*]u8, len: usize, flags: c_int) callconv(.c) isize;
+    extern fn close(fd: c_int) callconv(.c) c_int;
+    extern fn inet_addr(cp: [*:0]const u8) callconv(.c) u32;
+    extern fn htons(hostshort: u16) callconv(.c) u16;
+
+    pub fn closeSocket(s: c_int) void {
+        if (builtin.os.tag == .windows) {
+            _ = win_wsa.closesocket(s);
+        } else {
+            _ = close(s);
+        }
+    }
 };
 
 const SockAddrIn = extern struct {
@@ -211,9 +234,14 @@ pub const Client = struct {
         defer allocator.free(json_payload);
 
         // Perform TCP HTTP Request via standard socket
+        if (builtin.os.tag == .windows) {
+            var wd: win_wsa.WSADATA = undefined;
+            _ = win_wsa.WSAStartup(0x0202, &wd);
+        }
+
         const sockfd = c_net.socket(2, 1, 0); // AF_INET, SOCK_STREAM
         if (sockfd < 0) return error.SocketCreateFailed;
-        defer _ = c_net.close(sockfd);
+        defer c_net.closeSocket(sockfd);
 
         var host_z: [256:0]u8 = undefined;
         @memcpy(host_z[0..self.config.host.len], self.config.host);
