@@ -537,22 +537,38 @@ pub fn openAppByName(allocator: std.mem.Allocator, app_name: []const u8) ![]cons
         return "Открываю Параметры Windows.";
     }
 
-    // Map common Russian spoken aliases to query keywords
-    var query: []const u8 = trimmed;
-    if (std.mem.indexOf(u8, trimmed, "дискорд") != null or std.ascii.eqlIgnoreCase(trimmed, "discord")) {
-        query = "discord";
+    // Direct launch for top desktop applications
+    if (std.mem.indexOf(u8, trimmed, "стим") != null or std.ascii.eqlIgnoreCase(trimmed, "steam")) {
+        openUrl(allocator, "steam://open/main") catch {};
+        openApp(allocator, "C:\\Program Files (x86)\\Steam\\steam.exe", null) catch {};
+        openApp(allocator, "C:\\Program Files\\Steam\\steam.exe", null) catch {};
+        return "Открываю Steam.";
+    } else if (std.mem.indexOf(u8, trimmed, "дискорд") != null or std.ascii.eqlIgnoreCase(trimmed, "discord")) {
+        openUrl(allocator, "discord://") catch {};
+        openApp(allocator, "Discord.exe", null) catch {};
+        return "Открываю Discord.";
     } else if (std.mem.indexOf(u8, trimmed, "телеграм") != null or std.mem.indexOf(u8, trimmed, "телег") != null or std.ascii.eqlIgnoreCase(trimmed, "telegram")) {
-        query = "telegram";
+        openUrl(allocator, "tg://") catch {};
+        openApp(allocator, "Telegram.exe", null) catch {};
+        return "Открываю Telegram.";
     } else if (std.mem.indexOf(u8, trimmed, "хром") != null or std.mem.indexOf(u8, trimmed, "гугл") != null or std.mem.indexOf(u8, trimmed, "браузер") != null or std.ascii.eqlIgnoreCase(trimmed, "chrome")) {
-        query = "chrome";
-    } else if (std.mem.indexOf(u8, trimmed, "стим") != null or std.ascii.eqlIgnoreCase(trimmed, "steam")) {
-        query = "steam";
-    } else if (std.mem.indexOf(u8, trimmed, "обс") != null or std.ascii.eqlIgnoreCase(trimmed, "obs")) {
-        query = "obs";
-    } else if (std.mem.indexOf(u8, trimmed, "код") != null or std.mem.indexOf(u8, trimmed, "вскод") != null or std.mem.indexOf(u8, trimmed, "вс код") != null or std.ascii.eqlIgnoreCase(trimmed, "code")) {
-        query = "visual studio code";
+        openApp(allocator, "chrome.exe", null) catch {};
+        openApp(allocator, "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", null) catch {};
+        openApp(allocator, "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe", null) catch {};
+        return "Открываю Google Chrome.";
     } else if (std.mem.indexOf(u8, trimmed, "музык") != null or std.mem.indexOf(u8, trimmed, "яндекс") != null) {
-        query = "яндекс музыка";
+        openUrl(allocator, "yandexmusic://") catch {};
+        openUrl(allocator, "https://music.yandex.ru") catch {};
+        return "Открываю Яндекс Музыку.";
+    } else if (std.mem.indexOf(u8, trimmed, "код") != null or std.mem.indexOf(u8, trimmed, "вскод") != null or std.mem.indexOf(u8, trimmed, "вс код") != null or std.ascii.eqlIgnoreCase(trimmed, "code")) {
+        openApp(allocator, "code.cmd", null) catch {};
+        openApp(allocator, "Code.exe", null) catch {};
+        return "Открываю Visual Studio Code.";
+    }
+
+    var query: []const u8 = trimmed;
+    if (std.mem.indexOf(u8, trimmed, "обс") != null or std.ascii.eqlIgnoreCase(trimmed, "obs")) {
+        query = "obs";
     } else if (std.mem.indexOf(u8, trimmed, "аида") != null or std.ascii.eqlIgnoreCase(trimmed, "aida")) {
         query = "aida64";
     } else if (std.mem.indexOf(u8, trimmed, "автобернер") != null or std.mem.indexOf(u8, trimmed, "афтербернер") != null or std.ascii.eqlIgnoreCase(trimmed, "afterburner")) {
@@ -684,6 +700,57 @@ pub var g_live_screen_len: usize = 0;
 pub var g_live_window_title: [512]u8 = std.mem.zeroes([512]u8);
 pub var g_live_window_len: usize = 0;
 
+const WindowEnumState = struct {
+    allocator: std.mem.Allocator,
+    list: std.ArrayList(u8),
+};
+
+fn enumWindowsCallback(hwnd: win_c.HWND, lparam: win_c.LPARAM) callconv(.c) win_c.BOOL {
+    if (hwnd == null) return 1;
+    if (win_c.IsWindowVisible(hwnd) == 0) return 1;
+
+    var title_w: [512]u16 = undefined;
+    const len = win_c.GetWindowTextW(hwnd, @as([*c]u16, @ptrCast(&title_w)), 512);
+    if (len <= 0) return 1;
+
+    var title_u8: [512]u8 = undefined;
+    const u8_len = std.unicode.utf16LeToUtf8(&title_u8, title_w[0..@intCast(len)]) catch return 1;
+    const trimmed = std.mem.trim(u8, title_u8[0..u8_len], " \r\n\t");
+    if (trimmed.len < 2) return 1;
+
+    if (std.mem.eql(u8, trimmed, "Program Manager") or std.mem.eql(u8, trimmed, "Settings") or std.mem.eql(u8, trimmed, "Windows Input Experience")) {
+        return 1;
+    }
+
+    const state: *WindowEnumState = @ptrFromInt(@as(usize, @bitCast(lparam)));
+    if (state.list.items.len > 0) {
+        state.list.appendSlice(state.allocator, ", ") catch return 1;
+    }
+    state.list.append(state.allocator, '«') catch return 1;
+    state.list.appendSlice(state.allocator, trimmed) catch return 1;
+    state.list.append(state.allocator, '»') catch return 1;
+
+    return 1;
+}
+
+pub fn getOpenWindowsSummary(allocator: std.mem.Allocator) ![]const u8 {
+    if (builtin.os.tag != .windows) return try allocator.dupe(u8, "Рабочий стол");
+
+    var state = WindowEnumState{
+        .allocator = allocator,
+        .list = std.ArrayList(u8).empty,
+    };
+    errdefer state.list.deinit(allocator);
+
+    _ = win_c.EnumWindows(enumWindowsCallback, @as(win_c.LPARAM, @bitCast(@intFromPtr(&state))));
+
+    if (state.list.items.len == 0) {
+        return try allocator.dupe(u8, "Рабочий стол Windows");
+    }
+
+    return state.list.toOwnedSlice(allocator);
+}
+
 pub fn getLiveScreenContext(allocator: std.mem.Allocator) ![]const u8 {
     while (g_screen_lock.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {
         std.atomic.spinLoopHint();
@@ -719,11 +786,10 @@ pub fn startContinuousVisionWatcher(allocator: std.mem.Allocator) void {
             var iterations: u32 = 0;
 
             while (true) {
-                // Sleep 2.5 seconds between continuous observation cycles
                 if (builtin.os.tag == .windows) {
-                    win_c.Sleep(2500);
+                    win_c.Sleep(2000);
                 } else {
-                    std.time.sleep(2500 * std.time.ns_per_ms);
+                    std.time.sleep(2000 * std.time.ns_per_ms);
                 }
                 iterations += 1;
 
@@ -754,10 +820,12 @@ pub fn startContinuousVisionWatcher(allocator: std.mem.Allocator) void {
                     last_title_len = current_title_len;
                 }
 
-                // 2. Continuous vision inference with SmolVLM if window changed or every 3 cycles (~7.5s)
                 if (window_changed or (iterations % 3 == 0)) {
-                    const desc = lookAtScreen(alloc) catch continue;
-                    defer alloc.free(desc);
+                    var arena = std.heap.ArenaAllocator.init(alloc);
+                    defer arena.deinit();
+                    const a = arena.allocator();
+
+                    const desc = lookAtScreen(a) catch "";
 
                     while (g_screen_lock.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {
                         std.atomic.spinLoopHint();
@@ -783,89 +851,34 @@ pub fn startContinuousVisionWatcher(allocator: std.mem.Allocator) void {
 }
 
 pub fn lookAtScreen(allocator: std.mem.Allocator) ![]const u8 {
-    const bmp_path = "cache_screen.bmp";
-    const res = capture_screen_bmp(bmp_path);
-    if (res == 0) {
-        return "Не удалось сделать снимок экрана.";
-    }
+    // 1. Capture screen bmp
+    _ = capture_screen_bmp("cache_screen.bmp");
 
-    const fp = fopen(bmp_path, "rb");
-    if (fp == null) {
-        return "Ошибка чтения снимка экрана.";
-    }
-    defer _ = fclose(fp);
-
-    _ = fseek(fp, 0, 2); // SEEK_END
-    const file_size_c = ftell(fp);
-    _ = fseek(fp, 0, 0); // SEEK_SET
-
-    if (file_size_c <= 0 or file_size_c > 20 * 1024 * 1024) {
-        return "Некорректный размер снимка экрана.";
-    }
-    const file_size: usize = @intCast(file_size_c);
-    const img_buf = try allocator.alloc(u8, file_size);
-    defer allocator.free(img_buf);
-    const n_read = fread(img_buf.ptr, 1, file_size, fp);
-    if (n_read == 0) return "Не удалось прочитать данные экрана.";
-
-    const encoder = std.base64.standard.Encoder;
-    const b64_len = encoder.calcSize(img_buf.len);
-    const b64_buf = try allocator.alloc(u8, b64_len);
-    defer allocator.free(b64_buf);
-    _ = encoder.encode(b64_buf, img_buf);
-
-    // Call SmolVLM Vision server on port 8081 via JSON request file
-    const json_file = "cache_vlm_req.json";
-    const req_fp = fopen(json_file, "wb");
-    if (req_fp != null) {
-        const prefix = "{\"model\":\"smolvlm\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Describe concisely in Russian what is visible on this computer screen: open applications, code, browser contents, media or errors.\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/bmp;base64,";
-        const suffix = "\"}}]}],\"max_tokens\":256,\"temperature\":0.2}";
-        _ = fwrite(prefix.ptr, 1, prefix.len, req_fp);
-        _ = fwrite(b64_buf.ptr, 1, b64_buf.len, req_fp);
-        _ = fwrite(suffix.ptr, 1, suffix.len, req_fp);
-        _ = fclose(req_fp);
-
-        const vlm_out = executeCommand(allocator, "curl.exe -s -X POST http://127.0.0.1:8081/v1/chat/completions -H \"Content-Type: application/json\" -d @cache_vlm_req.json --max-time 10") catch "";
-        if (vlm_out.len > 20) {
-            if (std.json.parseFromSlice(std.json.Value, allocator, vlm_out, .{})) |parsed| {
-                defer parsed.deinit();
-                if (parsed.value == .object) {
-                    if (parsed.value.object.get("choices")) |choices| {
-                        if (choices == .array and choices.array.items.len > 0) {
-                            const choice0 = choices.array.items[0];
-                            if (choice0 == .object) {
-                                if (choice0.object.get("message")) |msg| {
-                                    if (msg == .object) {
-                                        if (msg.object.get("content")) |cnt| {
-                                            if (cnt == .string and cnt.string.len > 0) {
-                                                return try allocator.dupe(u8, cnt.string);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } else |_| {}
-        }
-    }
-
-    // Fallback: active window title
-    var fg_title: [512]u16 = undefined;
-    const hwnd = win_c.GetForegroundWindow();
-    if (hwnd != null) {
-        const len = win_c.GetWindowTextW(hwnd, @as([*c]u16, @ptrCast(&fg_title)), 512);
-        if (len > 0) {
-            var title_u8: [512]u8 = undefined;
-            const u8_len = std.unicode.utf16LeToUtf8(&title_u8, fg_title[0..@intCast(len)]) catch 0;
-            if (u8_len > 0) {
-                return try std.fmt.allocPrint(allocator, "Снимок экрана сделан. Активное окно: «{s}».", .{title_u8[0..u8_len]});
+    // 2. Active foreground window
+    var active_title_buf: [512]u8 = undefined;
+    var active_title_len: usize = 0;
+    if (builtin.os.tag == .windows) {
+        const hwnd = win_c.GetForegroundWindow();
+        if (hwnd != null) {
+            var fg_title: [512]u16 = undefined;
+            const len = win_c.GetWindowTextW(hwnd, @as([*c]u16, @ptrCast(&fg_title)), 512);
+            if (len > 0) {
+                if (std.unicode.utf16LeToUtf8(&active_title_buf, fg_title[0..@intCast(len)])) |u8_len| {
+                    active_title_len = u8_len;
+                } else |_| {}
             }
         }
     }
+    const active_name = if (active_title_len > 0) active_title_buf[0..active_title_len] else "Рабочий стол";
 
-    return "Снимок экрана сохранен в cache_screen.bmp.";
+    // 3. Enumerate all visible open windows
+    const open_windows = getOpenWindowsSummary(allocator) catch try allocator.dupe(u8, "Рабочий стол");
+    defer allocator.free(open_windows);
+
+    return try std.fmt.allocPrint(allocator,
+        "На экране сейчас открыты следующие окна: {s}. Активное окно в фокусе пользователя: «{s}».",
+        .{ open_windows, active_name },
+    );
 }
 
 pub fn readWebpageContent(allocator: std.mem.Allocator, raw_url: []const u8) ![]const u8 {

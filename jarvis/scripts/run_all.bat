@@ -45,17 +45,10 @@ echo [Warning] LLM server taking longer than usual to start. Launching Jarvis...
 goto check_vlm
 
 :llm_ready
-echo [1/3] LLM server is ready!
-
-:check_vlm
-if not exist "%~dp0..\models\SmolVLM-256M-Instruct-Q8_0.gguf" goto start_jarvis
-curl.exe -s http://127.0.0.1:8081/health >nul 2>&1
-if %errorlevel% equ 0 (
-    echo [2/3] Vision server is ready!
-    goto start_jarvis
-)
-echo [2/3] Starting Vision Brain (SmolVLM-256M on GPU)...
-start "Jarvis - Vision Server" /min cmd /c call "%~dp0run_vlm_server.bat"
+echo [1/2] LLM Brain is ready!
+echo [2/2] Launching Jarvis Assistant (Native Windows Engine)...
+echo.
+goto start_jarvis
 
 :start_jarvis
 :: 3. Launch Unified Jarvis Assistant
