@@ -726,9 +726,9 @@ fn enumWindowsCallback(hwnd: win_c.HWND, lparam: win_c.LPARAM) callconv(.c) win_
     if (state.list.items.len > 0) {
         state.list.appendSlice(state.allocator, ", ") catch return 1;
     }
-    state.list.append(state.allocator, '«') catch return 1;
+    state.list.appendSlice(state.allocator, "[") catch return 1;
     state.list.appendSlice(state.allocator, trimmed) catch return 1;
-    state.list.append(state.allocator, '»') catch return 1;
+    state.list.appendSlice(state.allocator, "]") catch return 1;
 
     return 1;
 }

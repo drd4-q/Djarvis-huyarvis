@@ -328,22 +328,39 @@ pub const Client = struct {
 
     fn appendJsonEscaped(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
         try out.append(allocator, '"');
-        for (s) |c| {
-            switch (c) {
-                '"' => try out.appendSlice(allocator, "\\\""),
-                '\\' => try out.appendSlice(allocator, "\\\\"),
-                '\n' => try out.appendSlice(allocator, "\\n"),
-                '\r' => try out.appendSlice(allocator, "\\r"),
-                '\t' => try out.appendSlice(allocator, "\\t"),
-                else => {
-                    if (c < 0x20) {
-                        var hex_buf: [8]u8 = undefined;
-                        const hex = try std.fmt.bufPrint(&hex_buf, "\\u{x:0>4}", .{c});
-                        try out.appendSlice(allocator, hex);
-                    } else {
-                        try out.append(allocator, c);
-                    }
-                },
+        var i: usize = 0;
+        while (i < s.len) {
+            const byte_len = std.unicode.utf8ByteSequenceLength(s[i]) catch {
+                i += 1;
+                continue;
+            };
+            if (i + byte_len > s.len) break;
+
+            if (byte_len == 1) {
+                const c = s[i];
+                switch (c) {
+                    '"' => try out.appendSlice(allocator, "\\\""),
+                    '\\' => try out.appendSlice(allocator, "\\\\"),
+                    '\n' => try out.appendSlice(allocator, "\\n"),
+                    '\r' => try out.appendSlice(allocator, "\\r"),
+                    '\t' => try out.appendSlice(allocator, "\\t"),
+                    else => {
+                        if (c < 0x20) {
+                            var hex_buf: [8]u8 = undefined;
+                            const hex = try std.fmt.bufPrint(&hex_buf, "\\u{x:0>4}", .{c});
+                            try out.appendSlice(allocator, hex);
+                        } else {
+                            try out.append(allocator, c);
+                        }
+                    },
+                }
+                i += 1;
+            } else {
+                const slice = s[i .. i + byte_len];
+                if (std.unicode.utf8ValidateSlice(slice)) {
+                    try out.appendSlice(allocator, slice);
+                }
+                i += byte_len;
             }
         }
         try out.append(allocator, '"');
