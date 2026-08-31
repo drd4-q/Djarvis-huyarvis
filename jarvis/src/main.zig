@@ -59,8 +59,6 @@ var global_app: AppState = .{};
 
 fn onMicCapture(chunk: []const u8, user_data: ?*anyopaque) void {
     _ = user_data;
-    // Discard microphone input while assistant is processing or speaking to prevent echo loop
-    if (global_app.busy_lock.isLocked()) return;
     if (global_app.stt_engine) |stt| {
         stt.processMicChunk(chunk);
     }
@@ -68,15 +66,15 @@ fn onMicCapture(chunk: []const u8, user_data: ?*anyopaque) void {
 
 fn onVoiceCommandRecognized(text: []const u8, udata: ?*anyopaque) void {
     _ = udata;
-    if (text.len == 0) return;
+    const trimmed = std.mem.trim(u8, text, " \r\n\t.,!?");
+    if (trimmed.len == 0) return;
 
-    global_app.busy_lock.lock();
-    defer global_app.busy_lock.unlock();
+    if (std.mem.eql(u8, trimmed, ".") or std.mem.eql(u8, trimmed, "?") or std.mem.eql(u8, trimmed, "!")) return;
 
-    std.debug.print("\n[Voice Input]: {s}\n", .{text});
+    std.debug.print("\n[Voice Input]: {s}\n", .{trimmed});
 
     if (global_app.router) |r| {
-        const reply = r.processUserText(text) catch |err| {
+        const reply = r.processUserText(trimmed) catch |err| {
             std.debug.print("[Jarvis Voice Error]: {any}\n", .{err});
             return;
         };

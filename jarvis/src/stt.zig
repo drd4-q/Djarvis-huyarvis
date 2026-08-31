@@ -8,6 +8,8 @@ extern fn fclose(stream: ?*anyopaque) c_int;
 extern fn fwrite(ptr: [*]const u8, size: usize, nmemb: usize, stream: ?*anyopaque) usize;
 extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: ?*anyopaque) usize;
 
+var g_wav_seq = std.atomic.Value(u32).init(0);
+
 pub const SttEngine = struct {
     allocator: std.mem.Allocator,
     whisper_exe: []const u8 = "bin\\whisper\\whisper-cli.exe",
@@ -119,7 +121,9 @@ pub const SttEngine = struct {
                     const Worker = struct {
                         fn run(alloc: std.mem.Allocator, w_exe: []const u8, m_path: []const u8, s_data: []const i16, cb: ?*const fn (text: []const u8, udata: ?*anyopaque) void, udata: ?*anyopaque) void {
                             defer alloc.free(s_data);
-                            const wav_file = "cache_mic.wav";
+                            const seq = g_wav_seq.fetchAdd(1, .monotonic) % 8;
+                            var wav_name_buf: [64]u8 = undefined;
+                            const wav_file = std.fmt.bufPrint(&wav_name_buf, "cache_mic_{d}.wav", .{seq}) catch "cache_mic.wav";
 
                             // Write normalized WAV file
                             writeWavFile(wav_file, s_data);
