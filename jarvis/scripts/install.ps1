@@ -248,6 +248,74 @@ function Ensure-LlamaServer-Installed {
     return $false
 }
 
+function Ensure-Piper-Installed {
+    Write-Host ""
+    Write-Host "[2.5] Checking Piper TTS engine in system:" -ForegroundColor Yellow
+    $LocalPiperExe = Join-Path $BinDir "piper\piper.exe"
+    if (Test-Path $LocalPiperExe) {
+        Write-Host "  [+] Piper TTS already present: $LocalPiperExe" -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host "  [~] Downloading Piper TTS engine..." -ForegroundColor Cyan
+    if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir -Force | Out-Null }
+    $PiperZipUrl = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip"
+    $PiperZipDest = Join-Path $BinDir "piper.zip"
+    
+    Download-FileWithProgress $PiperZipUrl $PiperZipDest "Piper TTS (Windows x64)"
+    if (Test-Path $PiperZipDest) {
+        try {
+            Expand-Archive -Path $PiperZipDest -DestinationPath $BinDir -Force
+            Remove-Item $PiperZipDest -Force -ErrorAction SilentlyContinue
+            if (Test-Path $LocalPiperExe) {
+                Write-Host "  [OK] Piper TTS successfully installed in $BinDir\piper" -ForegroundColor Green
+                return $true
+            }
+        } catch {
+            Write-Host "  [!] Error extracting Piper TTS archive: $_" -ForegroundColor Red
+        }
+    }
+    return $false
+}
+
+function Ensure-Whisper-Installed {
+    Write-Host ""
+    Write-Host "[2.6] Checking Whisper STT engine in system:" -ForegroundColor Yellow
+    $LocalWhisperExe = Join-Path $BinDir "whisper\whisper-cli.exe"
+    if (Test-Path $LocalWhisperExe) {
+        Write-Host "  [+] Whisper STT already present: $LocalWhisperExe" -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host "  [~] Downloading Whisper STT binary..." -ForegroundColor Cyan
+    if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir -Force | Out-Null }
+    $WhisperZipUrl = "https://github.com/ggml-org/whisper.cpp/releases/download/b4938/whisper-bin-x64.zip"
+    $WhisperZipDest = Join-Path $BinDir "whisper.zip"
+    $WhisperExtractDir = Join-Path $BinDir "whisper"
+
+    Download-FileWithProgress $WhisperZipUrl $WhisperZipDest "Whisper STT (Windows x64)"
+    if (Test-Path $WhisperZipDest) {
+        try {
+            Expand-Archive -Path $WhisperZipDest -DestinationPath $WhisperExtractDir -Force
+            Remove-Item $WhisperZipDest -Force -ErrorAction SilentlyContinue
+            
+            $ReleaseSub = Join-Path $WhisperExtractDir "Release"
+            if (Test-Path $ReleaseSub) {
+                Move-Item -Path "$ReleaseSub\*" -Destination $WhisperExtractDir -Force -ErrorAction SilentlyContinue
+                Remove-Item $ReleaseSub -Force -Recurse -ErrorAction SilentlyContinue
+            }
+
+            if (Test-Path $LocalWhisperExe) {
+                Write-Host "  [OK] Whisper STT successfully installed in $LocalWhisperExe" -ForegroundColor Green
+                return $true
+            }
+        } catch {
+            Write-Host "  [!] Error extracting Whisper archive: $_" -ForegroundColor Red
+        }
+    }
+    return $false
+}
+
 function Perform-Installation($dlLLM, $dlAudio, $addAutostart, $createDesktop, $installZig = $true) {
     Write-Host ""
     Write-Host "=======================================================" -ForegroundColor Cyan
@@ -278,6 +346,9 @@ function Perform-Installation($dlLLM, $dlAudio, $addAutostart, $createDesktop, $
         Download-FileWithProgress $WHISPER_URL (Join-Path $ModelsDir $WHISPER_FILE) "Whisper Base STT"
         Download-FileWithProgress $PIPER_ONNX_URL (Join-Path $ModelsDir $PIPER_ONNX_FILE) "Piper TTS ONNX"
         Download-FileWithProgress $PIPER_JSON_URL (Join-Path $ModelsDir $PIPER_JSON_FILE) "Piper TTS JSON Config"
+
+        Ensure-Piper-Installed | Out-Null
+        Ensure-Whisper-Installed | Out-Null
     }
 
     Write-Host ""

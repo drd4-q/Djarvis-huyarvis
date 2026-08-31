@@ -217,7 +217,14 @@ pub const Router = struct {
         }
 
         self.pruneHistory();
-        return persistent_content orelse "";
+        if (persistent_content) |c| {
+            const trimmed_c = std.mem.trim(u8, c, " \r\n\t");
+            if (std.mem.eql(u8, trimmed_c, "None") or std.mem.eql(u8, trimmed_c, "null") or trimmed_c.len == 0) {
+                return "Слушаю вас.";
+            }
+            return trimmed_c;
+        }
+        return "Слушаю вас.";
     }
 
     fn pruneHistory(self: *Router) void {

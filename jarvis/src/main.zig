@@ -5,6 +5,8 @@ const llm = @import("llm.zig");
 const router_mod = @import("router.zig");
 const config_mod = @import("config.zig");
 const tray_mod = @import("tray.zig");
+const tts_mod = @import("tts.zig");
+const stt_mod = @import("stt.zig");
 
 // Direct libc bindings for minimal overhead
 extern fn getenv(name: [*:0]const u8) ?[*:0]const u8;
@@ -44,14 +46,42 @@ fn checkStartMinimized() bool {
 // Global context for audio streaming and state
 const AppState = struct {
     audio_engine: audio.AudioEngine = .{},
+    stt_engine: ?*stt_mod.SttEngine = null,
+    router: ?*router_mod.Router = null,
+    tts_engine: ?*const tts_mod.TtsEngine = null,
+    busy_lock: audio.SpinLock = .{},
 };
 
 var global_app: AppState = .{};
 
 fn onMicCapture(chunk: []const u8, user_data: ?*anyopaque) void {
     _ = user_data;
-    _ = chunk;
-    // Real-time audio stream ready for VAD / STT engine (Silero / Whisper)
+    if (global_app.stt_engine) |stt| {
+        stt.processMicChunk(chunk);
+    }
+}
+
+fn onVoiceCommandRecognized(text: []const u8, udata: ?*anyopaque) void {
+    _ = udata;
+    if (text.len == 0) return;
+
+    global_app.busy_lock.lock();
+    defer global_app.busy_lock.unlock();
+
+    std.debug.print("\n[Voice Input]: {s}\n", .{text});
+
+    if (global_app.router) |r| {
+        const reply = r.processUserText(text) catch |err| {
+            std.debug.print("[Jarvis Voice Error]: {any}\n", .{err});
+            return;
+        };
+
+        std.debug.print("[Jarvis]: {s}\n\n", .{reply});
+
+        if (global_app.tts_engine) |tts| {
+            tts.speakAsync(reply);
+        }
+    }
 }
 
 fn sleepMs(ms: u32) void {
@@ -96,7 +126,8 @@ pub fn main() !void {
     std.debug.print("  JARVIS AI ASSISTANT (Monolithic Unified Engine - Zig 0.16) \n", .{});
     std.debug.print("  [Profile]: {s}\n", .{app_cfg.resource_profile});
     std.debug.print("  [LLM]: {s} @ {s}:{d}\n", .{ app_cfg.llm_model, app_cfg.llm_host, app_cfg.llm_port });
-    std.debug.print("  [Audio]: Miniaudio (16kHz Capture, 24kHz Playback)          \n", .{});
+    std.debug.print("  [STT]: Whisper Base (16kHz VAD Mic Capture)                \n", .{});
+    std.debug.print("  [TTS]: Piper Neural Voice (ru_RU-dmitri) + Windows SAPI     \n", .{});
     std.debug.print("  [Tools]: Direct Win32 / POSIX In-Memory Control             \n", .{});
     std.debug.print("==============================================================\n\n", .{});
 
@@ -111,7 +142,13 @@ pub fn main() !void {
         std.debug.print("[Audio] Warning: Audio start failed ({any})\n", .{err});
     };
 
-    // 2. Initialize LLM Client
+    // 2. Initialize STT Engine (Whisper + VAD)
+    var stt_engine = stt_mod.SttEngine.init(allocator);
+    defer stt_engine.deinit();
+    stt_engine.setCallback(onVoiceCommandRecognized, null);
+    global_app.stt_engine = &stt_engine;
+
+    // 3. Initialize LLM Client
     var llm_cfg: llm.Config = .{
         .host = app_cfg.llm_host,
         .port = app_cfg.llm_port,
@@ -130,7 +167,11 @@ pub fn main() !void {
 
     const llm_client = llm.Client.init(llm_cfg);
 
-    // 3. Initialize Tray Icon
+    // 4. Initialize TTS Engine
+    const tts_engine = tts_mod.TtsEngine.init(allocator);
+    global_app.tts_engine = &tts_engine;
+
+    // 5. Initialize Tray Icon
     std.debug.print("[Tray] Initializing system tray notification icon...\n", .{});
     const tray_thread: ?std.Thread = tray_mod.startTrayThread() catch |err| blk: {
         std.debug.print("[Tray] Warning: Tray thread init failed ({any})\n", .{err});
@@ -138,19 +179,20 @@ pub fn main() !void {
     };
     defer if (tray_thread) |t| t.detach();
 
-    // 4. Initialize Router
+    // 6. Initialize Router
     var router = router_mod.Router.init(allocator, llm_client);
     defer router.deinit();
+    global_app.router = &router;
 
     // Check if launched with --tray or --hide to start minimized in tray
     if (checkStartMinimized()) {
         tray_mod.showConsole(false);
     }
 
-    std.debug.print("[Jarvis] Ready. Enter your command or type 'exit'/'quit' to stop.\n", .{});
-    std.debug.print("[Jarvis] (You can minimize/restore window via System Tray icon)\n\n", .{});
+    std.debug.print("[Jarvis] Ready. Speak into microphone or type in console.\n", .{});
+    std.debug.print("[Jarvis] (Type 'exit'/'quit' to stop, minimize via Tray icon)\n\n", .{});
 
-    // 5. Interactive REPL loop
+    // 7. Interactive REPL loop
     var line_buf: [4096]u8 = undefined;
     var prompt_shown: bool = false;
     while (!tray_mod.should_exit.load(.acquire)) {
@@ -173,16 +215,21 @@ pub fn main() !void {
 
         if (std.mem.eql(u8, trimmed, "exit") or std.mem.eql(u8, trimmed, "quit")) {
             std.debug.print("\n[Jarvis] Выключение. До свидания!\n", .{});
+            tts_engine.speakAsync("Выключение. До свидания!");
             tray_mod.should_exit.store(true, .release);
             break;
         }
 
+        global_app.busy_lock.lock();
         const reply = router.processUserText(trimmed) catch |err| {
+            global_app.busy_lock.unlock();
             std.debug.print("[Jarvis Error]: Failed to get response: {any}\n", .{err});
             continue;
         };
+        global_app.busy_lock.unlock();
 
         std.debug.print("[Jarvis]: {s}\n\n", .{reply});
+        tts_engine.speakAsync(reply);
     }
 }
 
