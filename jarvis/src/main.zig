@@ -59,6 +59,8 @@ var global_app: AppState = .{};
 
 fn onMicCapture(chunk: []const u8, user_data: ?*anyopaque) void {
     _ = user_data;
+    // Suppress microphone input while TTS is playing sound through speakers to prevent echo loop
+    if (tts_mod.isPlayingAudio()) return;
     if (global_app.stt_engine) |stt| {
         stt.processMicChunk(chunk);
     }

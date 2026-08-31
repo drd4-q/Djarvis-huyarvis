@@ -22,8 +22,8 @@ pub const SttEngine = struct {
     preroll_count: usize = 0,
     is_speaking: bool = false,
     silence_frames: usize = 0,
-    energy_threshold: i32 = 300, // RMS energy threshold for speech (sensitive and crisp)
-    min_speech_frames: usize = 16000 * 4 / 10, // ~400ms minimum speech
+    energy_threshold: i32 = 450, // RMS energy threshold for speech (eliminates background noise)
+    min_speech_frames: usize = 16000 * 5 / 10, // ~500ms minimum speech
     max_silence_frames: usize = 16000 * 7 / 10, // ~700ms silence to conclude utterance
 
     on_speech_recognized: ?*const fn (text: []const u8, udata: ?*anyopaque) void = null,
@@ -43,8 +43,8 @@ pub const SttEngine = struct {
     pub fn init(allocator: std.mem.Allocator) SttEngine {
         var m_path: []const u8 = "models\\ggml-base.bin";
         const f_small = fopen("models\\ggml-small.bin", "rb");
-        if (f_small != null) {
-            _ = fclose(f_small);
+        if (f_small) |f| {
+            _ = fclose(f);
             m_path = "models\\ggml-small.bin";
         }
 
@@ -128,10 +128,10 @@ pub const SttEngine = struct {
                             // Write normalized WAV file
                             writeWavFile(wav_file, s_data);
 
-                            // Transcribe with whisper-cli using optimal beam search and Russian assistant prompt
+                            // Transcribe with whisper-cli using optimal beam search and concise vocabulary keywords
                             var cmd_buf: [1024]u8 = undefined;
                             const cmd_str = std.fmt.bufPrint(&cmd_buf,
-                                "{s} -m {s} -l ru -nt -np -nf -sns --best-of 5 --beam-size 5 -tp 0.0 --prompt \"Джарвис — умный голосовой помощник. Джарвис, сколько времени? Джарвис, открой браузер, включи музыку, сделай громкость.\" -f {s}",
+                                "{s} -m {s} -l ru -nt -np -nf -sns --best-of 5 --beam-size 5 -tp 0.0 --prompt \"Джарвис, YouTube, Discord, Telegram, Steam, Chrome, Windows.\" -f {s}",
                                 .{ w_exe, m_path, wav_file }
                             ) catch return;
 
@@ -259,9 +259,29 @@ pub const SttEngine = struct {
                 break;
             }
         }
-        // Ignore hallucinations like [музыка], (музыка), [Субтитры], etc.
+
+        // Ignore Whisper brackets hallucinations like [музыка], (музыка), [Субтитры], etc.
         if (std.mem.startsWith(u8, trimmed, "[") and std.mem.endsWith(u8, trimmed, "]")) return try allocator.dupe(u8, "");
         if (std.mem.startsWith(u8, trimmed, "(") and std.mem.endsWith(u8, trimmed, ")")) return try allocator.dupe(u8, "");
+
+        // Filter common Whisper silence hallucinations
+        const hallucinations = [_][]const u8{
+            "субтитр", "Субтитр", "редактор", "Редактор", "перевод", "Перевод",
+            "продолжение следует", "Продолжение следует", "спасибо за просмотр",
+            "Спасибо за просмотр", "подписывайтесь", "Подписывайтесь", "ставьте лайк",
+            "Ставьте лайк", "до свидания", "До свидания", "спокойной ночи",
+            "Спокойной ночи", "музыка", "Музыка", "аплодисменты", "Аплодисменты",
+            "тишина", "Тишина", "текст предоставил", "Текст предоставил",
+            "ютуб канал", "Ютуб канал", "Джарвис — умный", "умный голосовой",
+        };
+
+        for (hallucinations) |h| {
+            if (std.mem.indexOf(u8, trimmed, h) != null) {
+                return try allocator.dupe(u8, "");
+            }
+        }
+
+        if (trimmed.len < 3) return try allocator.dupe(u8, "");
 
         var current = try allocator.dupe(u8, trimmed);
 

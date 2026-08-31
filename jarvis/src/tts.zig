@@ -12,6 +12,12 @@ extern fn fopen(filename: [*:0]const u8, modes: [*:0]const u8) ?*anyopaque;
 extern fn fclose(stream: ?*anyopaque) c_int;
 extern fn fwrite(ptr: [*]const u8, size: usize, nmemb: usize, stream: ?*anyopaque) usize;
 
+pub var is_audio_playing = std.atomic.Value(bool).init(false);
+
+pub fn isPlayingAudio() bool {
+    return is_audio_playing.load(.acquire);
+}
+
 pub const TtsEngine = struct {
     allocator: std.mem.Allocator,
     piper_exe: []const u8 = "bin\\piper\\piper.exe",
@@ -104,12 +110,15 @@ pub const TtsEngine = struct {
                             _ = pclose(st);
                         }
 
-                        // 3. Play synthesized WAV on Windows
+                        // 3. Play synthesized WAV on Windows with hardware echo blocking
                         if (builtin.os.tag == .windows) {
                             var wav_w: [256:0]u16 = undefined;
                             if (std.unicode.utf8ToUtf16Le(&wav_w, wav_file)) |w_len| {
                                 wav_w[w_len] = 0;
-                                _ = win_c.PlaySoundW(@as([*:0]const u16, @ptrCast(&wav_w)), null, win_c.SND_FILENAME | win_c.SND_ASYNC);
+                                is_audio_playing.store(true, .release);
+                                _ = win_c.PlaySoundW(@as([*:0]const u16, @ptrCast(&wav_w)), null, win_c.SND_FILENAME | win_c.SND_SYNC);
+                                win_c.Sleep(200); // 200ms acoustic grace period to prevent speaker echo
+                                is_audio_playing.store(false, .release);
                             } else |_| {}
                         }
                         return;
@@ -118,6 +127,12 @@ pub const TtsEngine = struct {
 
                 // Fallback to Windows built-in SAPI via PowerShell
                 if (builtin.os.tag == .windows) {
+                    is_audio_playing.store(true, .release);
+                    defer {
+                        win_c.Sleep(200);
+                        is_audio_playing.store(false, .release);
+                    }
+
                     const ps_cmd_buf = alloc.alloc(u8, speech.len + 512) catch return;
                     defer alloc.free(ps_cmd_buf);
 
